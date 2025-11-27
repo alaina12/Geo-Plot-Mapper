@@ -1,0 +1,460 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Brochure Viewer</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/fabric.js/5.3.0/fabric.min.js"></script>
+    <style>
+        body {
+            margin: 0;
+            padding: 10px;
+            font-family: Arial, sans-serif;
+            background-color: #f5f5f5;
+            overflow: hidden;
+        }
+        #canvas-container {
+            width: 100%;
+            height: 100%;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            background-color: #ffffff;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        #fabric-canvas {
+            image-rendering: -webkit-optimize-contrast;
+            image-rendering: crisp-edges;
+        }
+        #info-panel {
+            position: absolute;
+            top: 10px;
+            right: 10px;
+            background: rgba(255, 255, 255, 0.98);
+            padding: 12px;
+            border-radius: 6px;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+            max-width: 280px;
+            font-size: 13px;
+            z-index: 1000;
+            border: 1px solid #e0e0e0;
+        }
+        .status-available { color: #4CAF50; font-weight: bold; }
+        .status-booked { color: #FF9800; font-weight: bold; }
+        .status-sold { color: #F44336; font-weight: bold; }
+        .plot-info {
+            margin: 5px 0;
+            padding: 5px;
+            border-bottom: 1px solid #eee;
+        }
+        .plot-info:last-child {
+            border-bottom: none;
+        }
+    </style>
+</head>
+<body>
+    <div id="canvas-container">
+        <canvas id="fabric-canvas"></canvas>
+    </div>
+    <div id="info-panel" style="display: none;">
+        <div id="plot-details"></div>
+    </div>
+
+    <script>
+        // Parse plots data first to check if overlay exists
+        let plotsData;
+        try {
+            plotsData = JSON.parse('{{PLOTS_DATA}}');
+        } catch (e) {
+            console.error('Error parsing plots data:', e);
+            plotsData = [];
+        }
+        
+        const backgroundImageUrl = '{{BACKGROUND_IMAGE_URL}}';
+        const plotOverlayUrl = '{{PLOT_OVERLAY_URL}}' !== 'null' && '{{PLOT_OVERLAY_URL}}' !== '' ? '{{PLOT_OVERLAY_URL}}' : null;
+        
+        // Initialize Fabric.js canvas
+        // Use a neutral background color that won't show white gaps
+        const canvas = new fabric.Canvas('fabric-canvas', {
+            width: 1200,
+            height: 800,
+            backgroundColor: plotOverlayUrl ? '#f0f0f0' : '#ffffff',  // Neutral gray for colored backgrounds
+            selection: false
+        });
+        
+        // Configure image smoothing for sharp background rendering
+        const canvasEl = canvas.getElement();
+        const ctx = canvasEl.getContext('2d');
+        ctx.imageSmoothingEnabled = true;  // Enable smoothing but with high quality
+        ctx.imageSmoothingQuality = 'high';  // High quality to avoid blur
+        
+        // Make canvas available globally for parent window access
+        window.fabricCanvas = canvas;
+        
+        // Store transform state globally
+        window.currentScale = 1.0;
+        window.currentOffsetX = 0;
+        window.currentOffsetY = 0;
+        window.currentRotation = 0;
+
+        // Status color mapping - subtle/subdued colors matching client's style
+        const statusColors = {
+            'available': 'rgba(106, 168, 79, 1)',   // Light green - subtle
+            'booked': 'rgba(74, 86, 226, 1)',       // Light orange - subtle
+            'sold': 'rgba(217, 48, 37, 1)'           // Light red - subtle
+        };
+
+        // Dark borders for better visibility - matching client's dark border style
+        const statusBorders = {
+            'available': '#424242',   // Dark gray - prominent borders
+            'booked': '#424242',      // Dark gray - prominent borders
+            'sold': '#424242'         // Dark gray - prominent borders
+        };
+
+
+        // Load background image
+        fabric.Image.fromURL(backgroundImageUrl, function(bgImg) {
+            // Always fit canvas (contain mode) to maintain aspect ratio and fit within frame
+            // This ensures the background image is not enlarged beyond the canvas
+            const hasOverlay = plotOverlayUrl !== null;
+            
+            // Fit canvas (maintain aspect ratio) - use Math.min to fit within frame
+            const scale = Math.min(
+                canvas.width / bgImg.width,
+                canvas.height / bgImg.height
+            );
+            const bgLeft = (canvas.width - bgImg.width * scale) / 2;
+            const bgTop = (canvas.height - bgImg.height * scale) / 2;
+            
+            bgImg.scale(scale);
+            bgImg.set({
+                left: bgLeft,
+                top: bgTop,
+                selectable: false,
+                evented: false,
+                opacity: 1.0  // Full opacity for background - fully visible
+            });
+            
+            // Store background properties for overlay and plots
+            window.bgScale = scale;
+            window.bgLeft = bgLeft;
+            window.bgTop = bgTop;
+            window.bgWidth = bgImg.width;
+            window.bgHeight = bgImg.height;
+            
+            // For colored backgrounds with overlay, add background as regular object for better visibility
+            // For white backgrounds, use setBackgroundImage
+            if (plotOverlayUrl) {
+                // Add background as regular image object at the bottom for maximum visibility
+                canvas.add(bgImg);
+                canvas.sendToBack(bgImg);
+                // Store reference for overlay positioning
+                window.bgImgRef = bgImg;
+            } else {
+                // Set background image for white backgrounds
+                canvas.setBackgroundImage(bgImg, canvas.renderAll.bind(canvas), {
+                    scaleX: scale,
+                    scaleY: scale,
+                    left: bgLeft,
+                    top: bgTop
+                }, {
+                    crossOrigin: 'anonymous'
+                });
+            }
+            
+            // Ensure background is fully visible
+            canvas.renderAll();
+
+            // Load overlay image only if provided (optional)
+            if (plotOverlayUrl) {
+                fabric.Image.fromURL(plotOverlayUrl, function(overlayImg) {
+                    // Overlay must match background exactly - same scale, same position
+                    // Calculate scale based on background dimensions to ensure alignment
+                    const overlayScale = window.bgScale || scale;
+                    const overlayLeft = window.bgLeft !== undefined ? window.bgLeft : bgLeft;
+                    const overlayTop = window.bgTop !== undefined ? window.bgTop : bgTop;
+                    
+                    // Scale overlay to match background's scaled dimensions
+                    // If overlay has different original dimensions, scale proportionally
+                    const bgScaledWidth = (window.bgWidth || bgImg.width) * overlayScale;
+                    const bgScaledHeight = (window.bgHeight || bgImg.height) * overlayScale;
+                    const overlayScaleX = bgScaledWidth / overlayImg.width;
+                    const overlayScaleY = bgScaledHeight / overlayImg.height;
+                    
+                    overlayImg.scaleX = overlayScaleX;
+                    overlayImg.scaleY = overlayScaleY;
+                    overlayImg.set({
+                        left: overlayLeft,
+                        top: overlayTop,
+                        selectable: false,
+                        evented: false,
+                        opacity: 0.2  // Very transparent so background is clearly visible
+                    });
+                    canvas.add(overlayImg);
+                    // Position overlay above background but below plot polygons
+                    // Background is already at the back, so overlay goes above it
+                    const bgImgRef = window.bgImgRef;
+                    if (bgImgRef) {
+                        const bgIndex = canvas.getObjects().indexOf(bgImgRef);
+                        if (bgIndex >= 0) {
+                            canvas.moveTo(overlayImg, bgIndex + 1);
+                        } else {
+                            canvas.sendToBack(overlayImg);
+                        }
+                    } else {
+                        canvas.sendToBack(overlayImg);
+                    }
+                    
+                    // Force re-render to ensure background is visible
+                    canvas.renderAll();
+
+                    // Add plot polygons after overlay loads - use full scale, no reduction
+                    addPlotPolygons(overlayScale, overlayLeft, overlayTop, true);
+                }, {
+                    crossOrigin: 'anonymous'
+                });
+            } else {
+                // Add plot polygons directly if no overlay
+                addPlotPolygons(scale, bgLeft, bgTop, false);
+            }
+        });
+
+        function addPlotPolygons(scale, offsetX, offsetY, hasOverlay) {
+            // Use background scale if available, otherwise use provided scale
+            const plotScale = window.bgScale || scale;
+            let plotOffsetX = window.bgLeft !== undefined ? window.bgLeft : offsetX;
+            let plotOffsetY = window.bgTop !== undefined ? window.bgTop : offsetY;
+            
+            // For colored backgrounds with overlay, use full scale (1.0) to match overlay exactly
+            // For white backgrounds, use 70% to ensure they fit nicely
+            const plotScaleFactor = hasOverlay ? plotScale : plotScale * 0.70;
+            
+            // First pass: calculate bounds of all plots
+            let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+            
+            plotsData.forEach((plot) => {
+                if (!plot.points || plot.points.length < 3) {
+                    return;
+                }
+                plot.points.forEach(point => {
+                    const x = (point.x * plotScaleFactor) + plotOffsetX;
+                    const y = (point.y * plotScaleFactor) + plotOffsetY;
+                    minX = Math.min(minX, x);
+                    minY = Math.min(minY, y);
+                    maxX = Math.max(maxX, x);
+                    maxY = Math.max(maxY, y);
+                });
+            });
+            
+            // Calculate center offset to center all plots in canvas
+            if (minX !== Infinity && minY !== Infinity) {
+                const plotWidth = maxX - minX;
+                const plotHeight = maxY - minY;
+                const canvasCenterX = canvas.width / 2;
+                const canvasCenterY = canvas.height / 2;
+                const plotCenterX = minX + plotWidth / 2;
+                const plotCenterY = minY + plotHeight / 2;
+                const centerOffsetX = canvasCenterX - plotCenterX;
+                const centerOffsetY = canvasCenterY - plotCenterY;
+                
+                // Apply centering offset
+                plotOffsetX += centerOffsetX;
+                plotOffsetY += centerOffsetY;
+            }
+            
+            plotsData.forEach((plot, index) => {
+                if (!plot.points || plot.points.length < 3) {
+                    return;
+                }
+
+                // Scale and offset points to match background image, with centering
+                const points = plot.points.map(point => ({
+                    x: (point.x * plotScaleFactor) + plotOffsetX,
+                    y: (point.y * plotScaleFactor) + plotOffsetY
+                }));
+                
+                // Validate that points are within canvas bounds
+                const validPoints = points.filter(p => 
+                    p.x >= 0 && p.x <= canvas.width && 
+                    p.y >= 0 && p.y <= canvas.height
+                );
+                
+                if (validPoints.length < 3) {
+                    console.warn('Plot', plot.id, 'has points outside canvas bounds, skipping');
+                    return;
+                }
+                
+                // Use valid points for polygon creation
+                const finalPoints = validPoints.length === points.length ? points : validPoints;
+
+                // Create polygon with dark borders and visible fill - matching client's style
+                const polygon = new fabric.Polygon(finalPoints, {
+                    fill: statusColors[plot.status] || statusColors['available'],
+                    stroke: statusBorders[plot.status] || statusBorders['available'],
+                    strokeWidth: 5,  // Thicker borders for better visibility
+                    opacity: 1,      // Full opacity
+                    selectable: false,
+                    hoverCursor: 'pointer',
+                    plotId: plot.id,
+                    plotData: plot,
+                    strokeLineJoin: 'miter',  // Sharp corners
+                    strokeLineCap: 'butt',    // Clean line ends
+                    objectCaching: false      // Better performance for many plots
+                });
+
+                // Store original values for hover restoration
+                const originalFill = polygon.fill;
+                const originalStrokeWidth = polygon.strokeWidth;
+                const originalStroke = polygon.stroke;
+
+                // Store hover fill color (more opaque)
+                const hoverFill = statusColors[plot.status] || statusColors['available'];
+                const hoverFillMoreOpaque = hoverFill.replace('0.25', '0.55');  // More visible on hover
+
+                // Enhanced hover effect - more prominent like client's version
+                polygon.on('mouseover', function() {
+                    // Increase fill opacity and border thickness on hover
+                    this.set({
+                        fill: hoverFillMoreOpaque,  // More visible fill
+                        strokeWidth: 4,             // Thicker border on hover
+                        stroke: '#212121'           // Even darker border on hover
+                    });
+                    canvas.renderAll();
+                    showPlotInfo(plot);
+                });
+
+                polygon.on('mouseout', function() {
+                    // Restore original appearance
+                    this.set({
+                        fill: originalFill,
+                        strokeWidth: originalStrokeWidth,
+                        stroke: originalStroke
+                    });
+                    canvas.renderAll();
+                    hidePlotInfo();
+                });
+
+                // Add click handler
+                polygon.on('mousedown', function() {
+                    console.log('Plot clicked:', plot.id, plot);
+                    // You can add click handling here, e.g., send to Streamlit
+                });
+
+                canvas.add(polygon);
+                
+                // Store original points for transformation
+                polygon.originalPoints = polygon.points.map(p => ({x: p.x, y: p.y}));
+                polygon.originalLeft = polygon.left;
+                polygon.originalTop = polygon.top;
+            });
+
+            canvas.renderAll();
+            
+            // Make applyTransform function available globally
+            window.applyBrochureTransform = function() {
+                const scale = window.currentScale || 1.0;
+                const offsetX = window.currentOffsetX || 0;
+                const offsetY = window.currentOffsetY || 0;
+                const rotation = window.currentRotation || 0;
+                
+                console.log('applyBrochureTransform called with:', {scale, offsetX, offsetY, rotation});
+                
+                const allObjects = canvas.getObjects();
+                const plotPolygons = allObjects.filter(obj => obj.plotId);
+                
+                console.log('Found', plotPolygons.length, 'plot polygons');
+                
+                plotPolygons.forEach(polygon => {
+                    if (!polygon.originalPoints) {
+                        // Store original points if not already stored
+                        polygon.originalPoints = polygon.points.map(p => ({x: p.x, y: p.y}));
+                        polygon.originalLeft = polygon.left;
+                        polygon.originalTop = polygon.top;
+                    }
+                    
+                    const origCenterX = polygon.originalPoints.reduce((sum, p) => sum + p.x, 0) / polygon.originalPoints.length;
+                    const origCenterY = polygon.originalPoints.reduce((sum, p) => sum + p.y, 0) / polygon.originalPoints.length;
+                    
+                    const transformedPoints = polygon.originalPoints.map(p => {
+                        let x = p.x - origCenterX;
+                        let y = p.y - origCenterY;
+                        
+                        x *= scale;
+                        y *= scale;
+                        
+                        const angleRad = (rotation * Math.PI) / 180;
+                        const cos = Math.cos(angleRad);
+                        const sin = Math.sin(angleRad);
+                        const newX = x * cos - y * sin;
+                        const newY = x * sin + y * cos;
+                        
+                        return {
+                            x: newX + origCenterX + offsetX,
+                            y: newY + origCenterY + offsetY
+                        };
+                    });
+                    
+                    polygon.set({
+                        points: transformedPoints,
+                        left: polygon.originalLeft + offsetX,
+                        top: polygon.originalTop + offsetY,
+                        angle: rotation
+                    });
+                });
+                
+                canvas.renderAll();
+                console.log('Transform applied and canvas rendered');
+            };
+        }
+
+        function showPlotInfo(plot) {
+            const infoPanel = document.getElementById('info-panel');
+            const plotDetails = document.getElementById('plot-details');
+            
+            let html = `<div class="plot-info">
+                <strong>Plot ID:</strong> ${plot.id}<br>
+                <strong>Status:</strong> <span class="status-${plot.status}">${plot.status}</span><br>`;
+            
+            if (plot.lat !== null && plot.lat !== undefined && 
+                plot.lon !== null && plot.lon !== undefined) {
+                html += `<strong>Location:</strong><br>
+                    Lat: ${plot.lat.toFixed(6)}<br>
+                    Lon: ${plot.lon.toFixed(6)}<br>`;
+            }
+            
+            html += `</div>`;
+            
+            plotDetails.innerHTML = html;
+            infoPanel.style.display = 'block';
+        }
+
+        function hidePlotInfo() {
+            document.getElementById('info-panel').style.display = 'none';
+        }
+
+        // Handle canvas resize
+        function resizeCanvas() {
+            const container = document.getElementById('canvas-container');
+            const containerWidth = container.clientWidth - 20;
+            const containerHeight = window.innerHeight - 20;
+            
+            canvas.setDimensions({
+                width: containerWidth,
+                height: containerHeight
+            });
+            
+            // Re-apply image smoothing settings after resize
+            const canvasEl = canvas.getElement();
+            const ctx = canvasEl.getContext('2d');
+            ctx.imageSmoothingEnabled = true;  // Enable smoothing but with high quality
+            ctx.imageSmoothingQuality = 'high';  // High quality to avoid blur
+        }
+
+        window.addEventListener('resize', resizeCanvas);
+        resizeCanvas();
+    </script>
+</body>
+</html>
+ 

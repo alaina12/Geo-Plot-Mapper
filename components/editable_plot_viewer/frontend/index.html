@@ -1,0 +1,1585 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Editable Plot Viewer</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/fabric.js/5.3.0/fabric.min.js"></script>
+    <style>
+        body {
+            margin: 0;
+            padding: 10px;
+            font-family: Arial, sans-serif;
+            background-color: #f5f5f5;
+            overflow: hidden;
+        }
+        #canvas-container {
+            width: 100%;
+            height: 100%;
+            min-height: 600px;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            background-color: #f0f0f0;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+            position: relative;
+            overflow: auto; /* Allow scrolling if content is larger */
+        }
+        #loading-message {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            color: #666;
+            font-size: 16px;
+            z-index: 1;
+        }
+        #info-panel {
+            position: absolute;
+            top: 10px;
+            right: 10px;
+            background: rgba(255, 255, 255, 0.98);
+            padding: 12px;
+            border-radius: 6px;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+            max-width: 280px;
+            font-size: 13px;
+            z-index: 1000;
+            border: 1px solid #e0e0e0;
+        }
+        .button-container {
+            position: absolute;
+            bottom: 60px;
+            right: 20px;
+            display: flex;
+            flex-direction: row;
+            gap: 10px;
+            z-index: 1000;
+        }
+        .save-button, .merge-button, .create-button, .delete-button {
+            padding: 10px 20px;
+            color: white;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 14px;
+            font-weight: bold;
+            white-space: nowrap;
+        }
+        .save-button {
+            background-color: #0066CC;
+        }
+        .save-button:hover {
+            background-color: #0052a3;
+        }
+        .merge-button {
+            background-color: #FF9800;
+        }
+        .merge-button:hover {
+            background-color: #F57C00;
+        }
+        .create-button {
+            background-color: #4CAF50;
+        }
+        .create-button:hover {
+            background-color: #45a049;
+        }
+        .delete-button {
+            background-color: #f44336;
+        }
+        .delete-button:hover {
+            background-color: #d32f2f;
+        }
+    </style>
+</head>
+<body>
+    <div id="canvas-container">
+        <div id="loading-message">Loading image and plots...</div>
+        <canvas id="fabric-canvas"></canvas>
+    </div>
+    <div id="info-panel" style="display: none;">
+        <div id="plot-details"></div>
+    </div>
+    <div class="button-container">
+        <button class="save-button" id="save-btn">Save Changes</button>
+        <button class="merge-button" id="merge-btn">Merge Points</button>
+        <button class="create-button" id="create-btn">Create Plot</button>
+        <button class="delete-button" id="delete-btn">Delete Plot</button>
+    </div>
+
+    <script>
+        // Initialize Fabric.js canvas with proper dimensions
+        const container = document.getElementById('canvas-container');
+        const initialWidth = container ? Math.max(container.clientWidth - 20, 800) : 1200;
+        const initialHeight = container ? Math.max(container.clientHeight - 20, 600) : 800;
+        
+        console.log('Initializing canvas with dimensions:', initialWidth, 'x', initialHeight);
+        
+        const canvas = new fabric.Canvas('fabric-canvas', {
+            width: initialWidth,
+            height: initialHeight,
+            backgroundColor: '#ffffff',
+            selection: true,
+            allowTouchScrolling: false
+        });
+        
+        // Disable canvas panning completely - we want fixed view
+        canvas.isDragging = false;
+        canvas.absolutePan = function() {}; // Disable panning
+        
+        canvas.on('mouse:down', function(opt) {
+            // Prevent any canvas panning/dragging
+            canvas.isDragging = false;
+            if (opt.target === null || opt.target === canvas.backgroundImage) {
+                // Only allow interaction if we're in create mode and clicking on empty space
+                if (!createMode) {
+                    if (opt.e) {
+                        opt.e.preventDefault();
+                        opt.e.stopPropagation();
+                    }
+                }
+            }
+        });
+        
+        // Prevent canvas from being dragged
+        canvas.on('mouse:move', function(opt) {
+            canvas.isDragging = false;
+            if (createMode && opt.e) {
+                // In create mode, prevent any dragging
+                opt.e.preventDefault();
+            }
+        });
+        
+        canvas.on('mouse:up', function(opt) {
+            canvas.isDragging = false;
+        });
+        
+        // Override pan methods to prevent panning
+        const originalPan = canvas.absolutePan;
+        canvas.absolutePan = function() {
+            if (!createMode) {
+                return originalPan.apply(this, arguments);
+            }
+            return this;
+        };
+
+        // Parse plots data
+        let plotsData;
+        try {
+            plotsData = JSON.parse('{{PLOTS_DATA}}');
+        } catch (e) {
+            console.error('Error parsing plots data:', e);
+            plotsData = [];
+        }
+        
+        const backgroundImageUrl = '{{BACKGROUND_IMAGE_URL}}';
+        const mode = '{{MODE}}'; // "points" or "lines"
+        
+        // Store plot objects and their points
+        const plotObjects = [];
+        const plotPoints = {}; // plotId -> array of circle objects
+        let mergeMode = false;
+        let createMode = false;
+        let deleteMode = false;
+        let selectedPointsForMerge = [];
+        let newPlotPoints = [];
+        let selectedPlotForDelete = null;
+
+        // Function to load and display the image
+        function loadBackgroundImage() {
+            console.log('Loading background image from URL:', backgroundImageUrl ? backgroundImageUrl.substring(0, 50) + '...' : 'null');
+            
+            if (!backgroundImageUrl || backgroundImageUrl === 'null' || backgroundImageUrl === '') {
+                console.error('Background image URL is empty or null');
+                const loadingMsg = document.getElementById('loading-message');
+                if (loadingMsg) {
+                    loadingMsg.textContent = 'Error: No background image provided';
+                    loadingMsg.style.color = '#ff0000';
+                }
+                // Still add plot elements even without background
+                addPlotElements(1, 0, 0);
+                return;
+            }
+            
+            fabric.Image.fromURL(backgroundImageUrl, function(bgImg) {
+                if (!bgImg) {
+                    console.error('Failed to load background image');
+                    // Still add plot elements even if image fails to load
+                    addPlotElements(1, 0, 0);
+                    return;
+                }
+                
+                console.log('Background image loaded:', bgImg.width, 'x', bgImg.height);
+                
+                // Get actual canvas container dimensions
+                const container = document.getElementById('canvas-container');
+                const containerWidth = container.clientWidth || 1200;
+                const containerHeight = container.clientHeight || 800;
+                
+                // Update canvas dimensions to match container
+                canvas.setDimensions({
+                    width: containerWidth,
+                    height: containerHeight
+                });
+                
+                // Calculate bounds of all plots to ensure they all fit
+                let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+                plotsData.forEach(plot => {
+                    if (plot.points && plot.points.length >= 3) {
+                        plot.points.forEach(point => {
+                            minX = Math.min(minX, point.x);
+                            minY = Math.min(minY, point.y);
+                            maxX = Math.max(maxX, point.x);
+                            maxY = Math.max(maxY, point.y);
+                        });
+                    }
+                });
+                
+                // Calculate the actual bounds we need to display
+                // Use the maximum of image dimensions and plot bounds
+                const imageMaxX = bgImg.width;
+                const imageMaxY = bgImg.height;
+                const imageMinX = 0;
+                const imageMinY = 0;
+                
+                // Get the overall bounds (image + plots) - ensure we include everything
+                const overallMinX = Math.min(imageMinX, minX !== Infinity ? minX : imageMinX);
+                const overallMinY = Math.min(imageMinY, minY !== Infinity ? minY : imageMinY);
+                const overallMaxX = Math.max(imageMaxX, maxX !== -Infinity ? maxX : imageMaxX);
+                const overallMaxY = Math.max(imageMaxY, maxY !== -Infinity ? maxY : imageMaxY);
+                
+                // Calculate dimensions needed
+                const contentWidth = overallMaxX - overallMinX;
+                const contentHeight = overallMaxY - overallMinY;
+                
+                // Add padding to ensure nothing is cut off at edges
+                // Use more padding for better visibility
+                const padding = 60;
+                const availableWidth = containerWidth - (padding * 2);
+                const availableHeight = containerHeight - (padding * 2);
+                
+                // Calculate scale to fit everything
+                // Use 95% for lines mode, 85% for points mode to ensure all plots are clearly visible
+                const scaleFactor = mode === 'lines' ? 0.95 : 0.85;
+                const scaleX = (availableWidth * scaleFactor) / contentWidth;
+                const scaleY = (availableHeight * scaleFactor) / contentHeight;
+                const scale = Math.min(scaleX, scaleY);
+                
+                console.log('Scale calculation:', {
+                    mode: mode,
+                    scaleFactor: scaleFactor,
+                    contentWidth: contentWidth,
+                    contentHeight: contentHeight,
+                    availableWidth: availableWidth,
+                    availableHeight: availableHeight,
+                    finalScale: scale
+                });
+                
+                // Calculate the offset needed to center the content
+                // This offset is relative to the overall bounds (starting from overallMinX, overallMinY)
+                const scaledContentWidth = contentWidth * scale;
+                const scaledContentHeight = contentHeight * scale;
+                
+                // Center the content in the available space
+                // For proper centering, we need to account for the entire content bounds
+                const baseOffsetX = (containerWidth - scaledContentWidth) / 2;
+                const baseOffsetY = (containerHeight - scaledContentHeight) / 2;
+                
+                // For plots: offset from the overall minimum to center everything
+                // Subtract the scaled minimum coordinates to shift content to center
+                const offsetX = baseOffsetX - (overallMinX * scale);
+                const offsetY = baseOffsetY - (overallMinY * scale);
+                
+                // For the background image: offset from (0,0) since image starts at origin
+                // Use the same logic to ensure image and plots are aligned
+                const imageOffsetX = baseOffsetX - (overallMinX * scale);
+                const imageOffsetY = baseOffsetY - (overallMinY * scale);
+                
+                console.log('Image scale:', scale, 'Image offset:', imageOffsetX, imageOffsetY, 'Plot offset:', offsetX, offsetY);
+                console.log('Content bounds - X:', overallMinX, 'to', overallMaxX, 'Y:', overallMinY, 'to', overallMaxY);
+                
+                // Set background image with its specific offset
+                // Make background non-interactive so it doesn't interfere with plot creation
+                bgImg.selectable = false;
+                bgImg.evented = false;
+                canvas.setBackgroundImage(bgImg, canvas.renderAll.bind(canvas), {
+                    scaleX: scale,
+                    scaleY: scale,
+                    left: imageOffsetX,
+                    top: imageOffsetY,
+                    originX: 'left',
+                    originY: 'top',
+                    selectable: false,
+                    evented: false
+                });
+
+                // Add plot polygons/points after background loads with the overall offset
+                addPlotElements(scale, offsetX, offsetY);
+                
+                // Ensure background image stays at the very back after adding all elements
+                // Also ensure plots are visible above the background
+                setTimeout(() => {
+                    if (canvas.backgroundImage) {
+                        canvas.sendToBack(canvas.backgroundImage);
+                        // Make sure background is not interactive
+                        canvas.backgroundImage.selectable = false;
+                        canvas.backgroundImage.evented = false;
+                    }
+                    // Bring all plot elements (circles, polygons, text) to front
+                    // Order: background < polygons < circles < text
+                    canvas.getObjects().forEach(obj => {
+                        if (obj.type === 'polygon' && obj.plotId) {
+                            canvas.sendToBack(obj);
+                        } else if (obj.type === 'circle' && obj.plotId) {
+                            canvas.bringToFront(obj);
+                        } else if (obj.type === 'text' && obj.plotId) {
+                            canvas.bringToFront(obj);
+                        }
+                    });
+                    canvas.renderAll();
+                }, 100);
+                
+                // Hide loading message
+                const loadingMsg = document.getElementById('loading-message');
+                if (loadingMsg) {
+                    loadingMsg.style.display = 'none';
+                }
+            }, {
+                crossOrigin: 'anonymous'
+            });
+        }
+        
+        // Start loading the background image
+        loadBackgroundImage();
+
+        function addPlotElements(scale, offsetX, offsetY) {
+            console.log('Adding plot elements. Scale:', scale, 'Offset:', offsetX, offsetY, 'Plots:', plotsData.length);
+            
+            if (!plotsData || plotsData.length === 0) {
+                console.warn('No plots data available');
+                return;
+            }
+            
+            plotsData.forEach((plot, index) => {
+                if (!plot.points || plot.points.length < 3) {
+                    console.warn('Plot', plot.id, 'has insufficient points:', plot.points);
+                    return;
+                }
+
+                // Scale and offset points to match background image
+                const points = plot.points.map(point => ({
+                    x: (point.x * scale) + offsetX,
+                    y: (point.y * scale) + offsetY
+                }));
+
+                // Store original pixel coordinates (before scaling)
+                const originalPoints = plot.points.map(p => ({x: p.x, y: p.y}));
+
+                // Create circles (red dots) for each corner point
+                const circles = [];
+                points.forEach((point, pointIndex) => {
+                    const circle = new fabric.Circle({
+                        left: point.x,
+                        top: point.y,
+                        radius: 6,
+                        fill: '#FF0000', // Red
+                        stroke: '#FFFFFF',
+                        strokeWidth: 2,
+                        originX: 'center',
+                        originY: 'center',
+                        selectable: true,
+                        hasControls: false,
+                        hasBorders: true,
+                        borderColor: '#0066CC',
+                        cornerColor: '#0066CC',
+                        cornerSize: 8,
+                        plotId: plot.id,
+                        pointIndex: pointIndex,
+                        originalX: originalPoints[pointIndex].x,
+                        originalY: originalPoints[pointIndex].y,
+                        scale: scale,
+                        offsetX: offsetX,
+                        offsetY: offsetY
+                    });
+
+                    // Make circles draggable - lines follow the dots
+                    circle.on('moving', function() {
+                        // Update polygon in real-time if in lines mode
+                        if (mode === 'lines') {
+                            const polygon = plotObjects.find(p => p.plotId === plot.id);
+                            if (polygon) {
+                                const circles = plotPoints[plot.id];
+                                const newPoints = circles.map(c => ({
+                                    x: c.left,
+                                    y: c.top
+                                }));
+                                polygon.points = newPoints;
+                                polygon.dirty = true;
+                                
+                                // Ensure circles stay on top during drag
+                                circles.forEach(c => canvas.bringToFront(c));
+                            }
+                        }
+                        canvas.renderAll();
+                    });
+                    
+                    // Add click handler for merge mode and delete mode
+                    circle.on('mousedown', function(e) {
+                        if (mergeMode) {
+                            e.e.stopPropagation();
+                            e.e.stopImmediatePropagation();
+                            togglePointForMerge(this);
+                            return false;
+                        } else if (deleteMode && mode === 'points') {
+                            e.e.stopPropagation();
+                            e.e.stopImmediatePropagation();
+                            selectPlotForDelete(this.plotId);
+                            return false;
+                        }
+                    });
+                    
+                    // Also handle click event for better responsiveness
+                    circle.on('mouseup', function(e) {
+                        if (mergeMode) {
+                            e.e.stopPropagation();
+                            e.e.stopImmediatePropagation();
+                            return false;
+                        }
+                    });
+
+                    circles.push(circle);
+                    canvas.add(circle);
+                });
+
+                plotPoints[plot.id] = circles;
+
+                // If mode is "lines", also draw the polygon lines
+                if (mode === 'lines') {
+                    const polygon = new fabric.Polygon(points, {
+                        fill: 'transparent',
+                        stroke: '#FF0000', // Red lines
+                        strokeWidth: 2,
+                        opacity: 0.7,
+                        selectable: false, // Not selectable - only dots are draggable
+                        evented: true,
+                        plotId: plot.id,
+                        plotNumber: plot.plot_number,
+                        hasControls: false,
+                        hasBorders: false,
+                        objectCaching: false // Disable caching for smooth real-time updates
+                    });
+                    
+                    // Add click handler for delete mode
+                    polygon.on('mousedown', function(e) {
+                        if (deleteMode) {
+                            e.e.stopPropagation();
+                            selectPlotForDelete(plot.id);
+                        }
+                    });
+
+                    // Update polygon when points move
+                    circles.forEach((circle, idx) => {
+                        circle.on('modified', function() {
+                            updatePolygon(plot.id);
+                        });
+                        circle.on('moving', function() {
+                            updatePolygon(plot.id);
+                        });
+                    });
+
+                    plotObjects.push(polygon);
+                    canvas.add(polygon);
+                    
+                    // Ensure proper z-order: background < polygon < circles < text
+                    // Move polygon above background but below circles
+                    if (canvas.backgroundImage) {
+                        canvas.backgroundImage.moveTo(0); // Background at bottom
+                    }
+                    polygon.moveTo(1); // Polygon above background
+                }
+
+                // Add plot number label in center
+                const centerX = points.reduce((sum, p) => sum + p.x, 0) / points.length;
+                const centerY = points.reduce((sum, p) => sum + p.y, 0) / points.length;
+                
+                const text = new fabric.Text(String(plot.plot_number || plot.id), {
+                    left: centerX,
+                    top: centerY,
+                    fontSize: 14,
+                    fill: '#000000',
+                    originX: 'center',
+                    originY: 'center',
+                    selectable: false,
+                    evented: false,
+                    plotId: plot.id
+                });
+                canvas.add(text);
+                
+                // Bring circles and text to front
+                circles.forEach(circle => canvas.bringToFront(circle));
+                canvas.bringToFront(text);
+            });
+
+            canvas.renderAll();
+            
+            // Hide loading message after plots are added
+            const loadingMsg = document.getElementById('loading-message');
+            if (loadingMsg) {
+                loadingMsg.style.display = 'none';
+            }
+        }
+
+        function updatePolygon(plotId) {
+            const circles = plotPoints[plotId];
+            if (!circles) return;
+
+            const polygon = plotObjects.find(p => p.plotId === plotId);
+            if (!polygon) return;
+
+            const newPoints = circles.map(circle => ({
+                x: circle.left,
+                y: circle.top
+            }));
+
+            polygon.set({ points: newPoints });
+            
+            // Ensure proper layering is maintained
+            if (canvas.backgroundImage) {
+                canvas.backgroundImage.moveTo(0);
+            }
+            circles.forEach(circle => canvas.bringToFront(circle));
+            
+            canvas.renderAll();
+        }
+
+        function saveChanges() {
+            // Collect updated coordinates - include all plots (existing, new, and handle deletions)
+            const updatedPlots = [];
+            
+            // Get the background image to calculate proper scale and offset
+            const bgImg = canvas.backgroundImage;
+            let bgScale = 1;
+            let bgOffsetX = 0;
+            let bgOffsetY = 0;
+            
+            if (bgImg) {
+                bgScale = bgImg.scaleX || 1;
+                bgOffsetX = bgImg.left || 0;
+                bgOffsetY = bgImg.top || 0;
+            } else {
+                // Fallback to stored values from circles
+                const allCircles = Object.values(plotPoints).flat();
+                if (allCircles.length > 0) {
+                    bgScale = allCircles[0].scale || 1;
+                    bgOffsetX = allCircles[0].offsetX || 0;
+                    bgOffsetY = allCircles[0].offsetY || 0;
+                }
+            }
+            
+            // Process all plots in plotsData (existing plots)
+            plotsData.forEach(plot => {
+                const circles = plotPoints[plot.id];
+                if (!circles || circles.length === 0) {
+                    // Plot was deleted or has no points - skip it
+                    return;
+                }
+
+                // Convert canvas coordinates back to original pixel coordinates
+                // Account for transformations applied by user
+                const updatedPoints = circles.map(circle => {
+                    // Get current canvas position
+                    let canvasX = circle.left;
+                    let canvasY = circle.top;
+                    
+                    // Convert from canvas coordinates to original image coordinates
+                    const originalX = Math.round((canvasX - bgOffsetX) / bgScale);
+                    const originalY = Math.round((canvasY - bgOffsetY) / bgScale);
+                    
+                    return {
+                        x: Math.max(0, originalX), // Ensure non-negative
+                        y: Math.max(0, originalY)
+                    };
+                });
+
+                updatedPlots.push({
+                    id: plot.id,
+                    plot_number: plot.plot_number,
+                    points: updatedPoints
+                });
+            });
+
+            // Store in localStorage with a unique key
+            const storageKey = 'editable_plot_updates_' + Date.now();
+            try {
+                localStorage.setItem('editable_plot_updates', JSON.stringify({
+                    type: 'plot_coordinates_updated',
+                    plots: updatedPlots,
+                    timestamp: Date.now(),
+                    storageKey: storageKey
+                }));
+                // Also store with the key for retrieval
+                localStorage.setItem(storageKey, JSON.stringify(updatedPlots));
+            } catch (e) {
+                console.error('Failed to save to localStorage:', e);
+            }
+            
+            // Also try to communicate with parent window
+            try {
+                if (window.parent) {
+                    window.parent.postMessage({
+                        type: 'plot_coordinates_updated',
+                        plots: updatedPlots,
+                        timestamp: Date.now()
+                    }, '*');
+                }
+            } catch (e) {
+                console.error('Failed to post message:', e);
+            }
+            
+            // Show success message
+            const saveBtn = document.getElementById('save-btn');
+            if (saveBtn) {
+                const originalText = saveBtn.textContent;
+                saveBtn.textContent = '✓ Saved!';
+                saveBtn.style.backgroundColor = '#4CAF50';
+                setTimeout(() => {
+                    saveBtn.textContent = originalText;
+                    saveBtn.style.backgroundColor = '#0066CC';
+                }, 2000);
+            }
+            
+            // Also store in a data attribute on body for easier access
+            try {
+                document.body.setAttribute('data-saved-coords', JSON.stringify(updatedPlots));
+            } catch (e) {
+                console.error('Failed to set data attribute:', e);
+            }
+            
+            // Show coordinates in a copy-friendly text area
+            showCopyArea(updatedPlots);
+            
+            function showCopyArea(data) {
+                // Create a prominent text area with the JSON for easy copying
+                let copyArea = document.getElementById('coords-copy-area');
+                if (!copyArea) {
+                    copyArea = document.createElement('textarea');
+                    copyArea.id = 'coords-copy-area';
+                    copyArea.style.position = 'fixed';
+                    copyArea.style.top = '10px';
+                    copyArea.style.left = '10px';
+                    copyArea.style.width = '400px';
+                    copyArea.style.height = '150px';
+                    copyArea.style.zIndex = '10000';
+                    copyArea.style.backgroundColor = '#ffffcc';
+                    copyArea.style.border = '3px solid #ff6b00';
+                    copyArea.style.padding = '10px';
+                    copyArea.style.fontSize = '11px';
+                    copyArea.style.fontFamily = 'monospace';
+                    copyArea.style.borderRadius = '8px';
+                    copyArea.style.boxShadow = '0 4px 12px rgba(0,0,0,0.3)';
+                    copyArea.readOnly = true;
+                    
+                    // Add title/header
+                    const header = document.createElement('div');
+                    header.style.position = 'fixed';
+                    header.style.top = '10px';
+                    header.style.left = '10px';
+                    header.style.width = '400px';
+                    header.style.backgroundColor = '#ff6b00';
+                    header.style.color = 'white';
+                    header.style.padding = '8px 10px';
+                    header.style.fontWeight = 'bold';
+                    header.style.fontSize = '12px';
+                    header.style.zIndex = '10001';
+                    header.style.borderRadius = '8px 8px 0 0';
+                    header.innerHTML = '📋 Copy these coordinates and paste below ↓';
+                    header.id = 'coords-header';
+                    document.body.appendChild(header);
+                    
+                    // Adjust textarea to be below header
+                    copyArea.style.top = '42px';
+                    copyArea.style.borderRadius = '0 0 8px 8px';
+                    
+                    // Add close button
+                    const closeBtn = document.createElement('button');
+                    closeBtn.innerHTML = '✕';
+                    closeBtn.style.position = 'absolute';
+                    closeBtn.style.right = '5px';
+                    closeBtn.style.top = '5px';
+                    closeBtn.style.background = 'rgba(255,255,255,0.3)';
+                    closeBtn.style.border = 'none';
+                    closeBtn.style.color = 'white';
+                    closeBtn.style.width = '24px';
+                    closeBtn.style.height = '24px';
+                    closeBtn.style.borderRadius = '4px';
+                    closeBtn.style.cursor = 'pointer';
+                    closeBtn.style.fontSize = '16px';
+                    closeBtn.style.fontWeight = 'bold';
+                    closeBtn.onclick = function() {
+                        copyArea.style.display = 'none';
+                        header.style.display = 'none';
+                    };
+                    header.appendChild(closeBtn);
+                    
+                    document.body.appendChild(copyArea);
+                }
+                
+                const jsonData = JSON.stringify({plots: data}, null, 2);
+                copyArea.value = jsonData;
+                copyArea.style.display = 'block';
+                
+                const header = document.getElementById('coords-header');
+                if (header) {
+                    header.style.display = 'block';
+                }
+                
+                // Select all text for easy copying
+                copyArea.select();
+                copyArea.setSelectionRange(0, copyArea.value.length);
+                
+                // Try to copy to clipboard automatically
+                try {
+                    document.execCommand('copy');
+                    console.log('Coordinates copied to clipboard automatically');
+                    
+                    // Show success message
+                    const header = document.getElementById('coords-header');
+                    if (header) {
+                        header.innerHTML = '✅ Copied! Paste below ↓ (closes in 15s)';
+                        header.style.backgroundColor = '#4CAF50';
+                    }
+                } catch (err) {
+                    console.log('Auto-copy failed, user will copy manually');
+                }
+                
+                // Auto-hide after 15 seconds
+                setTimeout(() => {
+                    if (copyArea) copyArea.style.display = 'none';
+                    const header = document.getElementById('coords-header');
+                    if (header) header.style.display = 'none';
+                }, 15000);
+            }
+            
+            console.log('Changes saved:', updatedPlots.length, 'plots updated');
+            console.log('Coordinates JSON:', JSON.stringify(updatedPlots));
+            
+            // Trigger automatic image regeneration by posting message
+            try {
+                if (window.parent) {
+                    window.parent.postMessage({
+                        type: 'regenerate_image_request',
+                        plots: updatedPlots,
+                        timestamp: Date.now()
+                    }, '*');
+                }
+            } catch (e) {
+                console.error('Failed to send regeneration request:', e);
+            }
+        }
+        
+        function enableMergeMode() {
+            mergeMode = !mergeMode;
+            createMode = false;
+            deleteMode = false;
+            selectedPointsForMerge = [];
+            selectedPlotForDelete = null;
+            const mergeBtn = document.getElementById('merge-btn');
+            const deleteBtn = document.getElementById('delete-btn');
+            const createBtn = document.getElementById('create-btn');
+            if (mergeMode) {
+                mergeBtn.textContent = 'Cancel Merge';
+                mergeBtn.style.backgroundColor = '#f44336';
+                canvas.defaultCursor = 'pointer';
+                canvas.hoverCursor = 'pointer';
+                if (deleteBtn) deleteBtn.style.opacity = '0.5';
+                if (createBtn) createBtn.style.opacity = '0.5';
+                // Make ALL circles on canvas clickable (including newly created ones)
+                // Get all circles from plotPoints and also check canvas directly
+                const allCircles = [];
+                Object.values(plotPoints).flat().forEach(circle => {
+                    allCircles.push(circle);
+                });
+                // Also get any circles directly from canvas that might not be in plotPoints yet
+                canvas.getObjects().forEach(obj => {
+                    if (obj.type === 'circle' && obj.plotId && allCircles.indexOf(obj) === -1) {
+                        allCircles.push(obj);
+                    }
+                });
+                // Make all circles clickable
+                allCircles.forEach(circle => {
+                    circle.set({ 
+                        evented: true,
+                        selectable: true,
+                        hoverCursor: 'pointer'
+                    });
+                });
+            } else {
+                mergeBtn.textContent = 'Merge Points';
+                mergeBtn.style.backgroundColor = '#FF9800';
+                canvas.defaultCursor = 'default';
+                canvas.hoverCursor = 'default';
+                if (deleteBtn) deleteBtn.style.opacity = '1';
+                if (createBtn) createBtn.style.opacity = '1';
+                // Reset all point colors - get all circles from canvas
+                const allCircles = [];
+                Object.values(plotPoints).flat().forEach(circle => {
+                    allCircles.push(circle);
+                });
+                canvas.getObjects().forEach(obj => {
+                    if (obj.type === 'circle' && obj.plotId && allCircles.indexOf(obj) === -1) {
+                        allCircles.push(obj);
+                    }
+                });
+                allCircles.forEach(circle => {
+                    circle.set({ fill: '#FF0000', stroke: '#FFFFFF', strokeWidth: 2 });
+                });
+                canvas.renderAll();
+            }
+        }
+        
+        function togglePointForMerge(circle) {
+            if (!mergeMode) return;
+            
+            const index = selectedPointsForMerge.indexOf(circle);
+            if (index > -1) {
+                // Deselect
+                selectedPointsForMerge.splice(index, 1);
+                circle.set({ fill: '#FF0000', stroke: '#FFFFFF', strokeWidth: 2 });
+            } else {
+                // Select
+                if (selectedPointsForMerge.length < 2) {
+                    selectedPointsForMerge.push(circle);
+                    circle.set({ fill: '#00FF00', stroke: '#000000', strokeWidth: 3 });
+                } else {
+                    // Already have 2 selected, replace first
+                    const firstPoint = selectedPointsForMerge[0];
+                    firstPoint.set({ fill: '#FF0000', stroke: '#FFFFFF', strokeWidth: 2 });
+                    selectedPointsForMerge.shift();
+                    selectedPointsForMerge.push(circle);
+                    circle.set({ fill: '#00FF00', stroke: '#000000', strokeWidth: 3 });
+                }
+            }
+            
+            // Force immediate render
+            canvas.renderAll();
+            
+            // Update merge button text to show selection status
+            const mergeBtn = document.getElementById('merge-btn');
+            if (mergeBtn) {
+                if (selectedPointsForMerge.length === 2) {
+                    mergeBtn.textContent = 'Click to Merge (2 selected)';
+                    mergeBtn.style.backgroundColor = '#4CAF50';
+                } else if (selectedPointsForMerge.length === 1) {
+                    mergeBtn.textContent = 'Select Another Point (1 selected)';
+                    mergeBtn.style.backgroundColor = '#FF9800';
+                } else {
+                    mergeBtn.textContent = 'Select Points to Merge';
+                    mergeBtn.style.backgroundColor = '#FF9800';
+                }
+            }
+            
+            console.log('Merge selection:', selectedPointsForMerge.length, 'points selected');
+        }
+        
+        // Setup button handlers
+        function setupButtonHandlers() {
+            const saveBtn = document.getElementById('save-btn');
+            const mergeBtn = document.getElementById('merge-btn');
+            const createBtn = document.getElementById('create-btn');
+            const deleteBtn = document.getElementById('delete-btn');
+            
+            if (saveBtn) {
+                saveBtn.onclick = saveChanges;
+            }
+            
+            if (mergeBtn) {
+                mergeBtn.onclick = function() {
+                    if (mergeMode && selectedPointsForMerge.length === 2) {
+                        mergeSelectedPoints();
+                    } else {
+                        enableMergeMode();
+                    }
+                };
+            }
+            
+            if (createBtn) {
+                createBtn.onclick = function() {
+                    if (createMode && newPlotPoints.length >= 3) {
+                        createNewPlot();
+                    } else {
+                        enableCreateMode();
+                    }
+                };
+            }
+            
+            if (deleteBtn) {
+                deleteBtn.onclick = function() {
+                    if (deleteMode) {
+                        if (selectedPlotForDelete) {
+                            deletePlot(selectedPlotForDelete);
+                        } else {
+                            enableDeleteMode(); // Cancel if no plot selected
+                        }
+                    } else {
+                        enableDeleteMode();
+                    }
+                };
+            }
+        }
+        
+        // Initialize button handlers when DOM is ready
+        if (document.readyState === 'loading') {
+            document.addEventListener('DOMContentLoaded', setupButtonHandlers);
+        } else {
+            setupButtonHandlers();
+        }
+        
+        function mergeSelectedPoints() {
+            if (selectedPointsForMerge.length !== 2) {
+                alert('Please select exactly 2 points to merge. Click on points to select them.');
+                return;
+            }
+            
+            const point1 = selectedPointsForMerge[0];
+            const point2 = selectedPointsForMerge[1];
+            
+            // Check if points are close enough (within 20 pixels)
+            const distance = Math.sqrt(
+                Math.pow(point1.left - point2.left, 2) + 
+                Math.pow(point1.top - point2.top, 2)
+            );
+            
+            if (distance > 20) {
+                alert('Points are too far apart. Please move them closer together first.');
+                return;
+            }
+            
+            // Average the positions
+            const avgX = (point1.left + point2.left) / 2;
+            const avgY = (point1.top + point2.top) / 2;
+            
+            // Move both points to the average position
+            point1.set({ left: avgX, top: avgY });
+            point2.set({ left: avgX, top: avgY });
+            
+            // Update polygons if in lines mode
+            if (mode === 'lines') {
+                if (point1.plotId) updatePolygon(point1.plotId);
+                if (point2.plotId && point2.plotId !== point1.plotId) updatePolygon(point2.plotId);
+            }
+            
+            // Reset merge mode
+            selectedPointsForMerge = [];
+            enableMergeMode(); // This will disable merge mode
+            
+            canvas.renderAll();
+            
+            console.log('Points merged at:', avgX, avgY);
+        }
+        
+        function enableCreateMode() {
+            createMode = !createMode;
+            mergeMode = false;
+            deleteMode = false;
+            newPlotPoints = [];
+            selectedPlotForDelete = null;
+            const createBtn = document.getElementById('create-btn');
+            const deleteBtn = document.getElementById('delete-btn');
+            if (createMode) {
+                createBtn.textContent = 'Cancel Create';
+                createBtn.style.backgroundColor = '#f44336';
+                canvas.defaultCursor = 'crosshair';
+                canvas.hoverCursor = 'crosshair';
+                canvas.on('mouse:down', handleCreatePlotClick);
+                // Disable selection and panning during create mode
+                canvas.selection = false;
+                canvas.defaultCursor = 'crosshair';
+                // Prevent canvas from being moved
+                canvas.allowTouchScrolling = false;
+                if (deleteBtn) deleteBtn.style.opacity = '0.5';
+            } else {
+                createBtn.textContent = 'Create Plot';
+                createBtn.style.backgroundColor = '#4CAF50';
+                canvas.defaultCursor = 'default';
+                canvas.hoverCursor = 'default';
+                canvas.off('mouse:down', handleCreatePlotClick);
+                canvas.selection = true;
+                if (deleteBtn) deleteBtn.style.opacity = '1';
+                // Clear any temporary points
+                newPlotPoints.forEach(point => canvas.remove(point));
+                newPlotPoints = [];
+                canvas.renderAll();
+            }
+        }
+        
+        function handleCreatePlotClick(options) {
+            if (!createMode) return;
+            
+            // Prevent default canvas behavior and panning
+            if (options.e) {
+                options.e.preventDefault();
+                options.e.stopPropagation();
+                options.e.stopImmediatePropagation();
+            }
+            
+            // Don't create on existing plot elements (but allow clicking on background)
+            if (options.target && options.target !== canvas.backgroundImage) {
+                if (options.target.plotId || options.target.type === 'polygon' || options.target.type === 'text') {
+                    return;
+                }
+            }
+            
+            const pointer = canvas.getPointer(options.e);
+            const bgImg = canvas.backgroundImage;
+            let scale = 1;
+            let offsetX = 0;
+            let offsetY = 0;
+            
+            if (bgImg) {
+                scale = bgImg.scaleX || 1;
+                offsetX = bgImg.left || 0;
+                offsetY = bgImg.top || 0;
+            }
+            
+            // Check if the new point is too close to existing points (prevent interconnection)
+            const minDistance = 20; // Minimum distance in canvas pixels
+            let tooClose = false;
+            
+            // Check against all existing plot points
+            Object.values(plotPoints).flat().forEach(existingCircle => {
+                if (existingCircle.plotId !== 'new_plot') {
+                    const dx = pointer.x - existingCircle.left;
+                    const dy = pointer.y - existingCircle.top;
+                    const distance = Math.sqrt(dx * dx + dy * dy);
+                    if (distance < minDistance) {
+                        tooClose = true;
+                    }
+                }
+            });
+            
+            // Check against other new plot points being created
+            newPlotPoints.forEach(existingNewPoint => {
+                const dx = pointer.x - existingNewPoint.left;
+                const dy = pointer.y - existingNewPoint.top;
+                const distance = Math.sqrt(dx * dx + dy * dy);
+                if (distance < minDistance) {
+                    tooClose = true;
+                }
+            });
+            
+            if (tooClose) {
+                console.log('Point too close to existing point, skipping');
+                return; // Don't create point if too close
+            }
+            
+            // Create a new point - ensure it's on top of everything
+            const circle = new fabric.Circle({
+                left: pointer.x,
+                top: pointer.y,
+                radius: 6,
+                fill: '#0000FF', // Blue for new points
+                stroke: '#FFFFFF',
+                strokeWidth: 2,
+                originX: 'center',
+                originY: 'center',
+                selectable: true,
+                hasControls: false,
+                hasBorders: true,
+                borderColor: '#0066CC',
+                cornerColor: '#0066CC',
+                cornerSize: 8,
+                plotId: 'new_plot',
+                pointIndex: newPlotPoints.length,
+                scale: scale,
+                offsetX: offsetX,
+                offsetY: offsetY,
+                evented: true,
+                hoverCursor: 'move',
+                moveCursor: 'move'
+            });
+            
+            circle.on('moving', function() {
+                canvas.renderAll();
+            });
+            
+            newPlotPoints.push(circle);
+            canvas.add(circle);
+            // Ensure new point is always on top
+            canvas.bringToFront(circle);
+            canvas.renderAll();
+            
+            // Update button text to show progress
+            const createBtn = document.getElementById('create-btn');
+            const pointsNeeded = Math.max(3, 4 - newPlotPoints.length);
+            if (newPlotPoints.length < 3) {
+                createBtn.textContent = `Click ${pointsNeeded} more point(s)`;
+            } else {
+                createBtn.textContent = 'Click to finish (or add more)';
+            }
+        }
+        
+        function createNewPlot() {
+            if (newPlotPoints.length < 3) {
+                alert('Please create at least 3 points to form a plot.');
+                return;
+            }
+            
+            // Get next plot number
+            const maxPlotNum = Math.max(...plotsData.map(p => p.plot_number || 0), 0);
+            const newPlotNum = maxPlotNum + 1;
+            
+            // Convert points to original coordinates
+            const bgImg = canvas.backgroundImage;
+            let scale = 1;
+            let offsetX = 0;
+            let offsetY = 0;
+            
+            if (bgImg) {
+                scale = bgImg.scaleX || 1;
+                offsetX = bgImg.left || 0;
+                offsetY = bgImg.top || 0;
+            }
+            
+            // Order points properly (clockwise or counter-clockwise) to avoid X-shaped polygons
+            const points = newPlotPoints.map(circle => {
+                const originalX = Math.round((circle.left - offsetX) / scale);
+                const originalY = Math.round((circle.top - offsetY) / scale);
+                return { 
+                    x: originalX, 
+                    y: originalY,
+                    canvasX: circle.left,
+                    canvasY: circle.top
+                };
+            });
+            
+            // Sort points in clockwise order around their centroid
+            const centerX = points.reduce((sum, p) => sum + p.canvasX, 0) / points.length;
+            const centerY = points.reduce((sum, p) => sum + p.canvasY, 0) / points.length;
+            
+            points.sort((a, b) => {
+                const angleA = Math.atan2(a.canvasY - centerY, a.canvasX - centerX);
+                const angleB = Math.atan2(b.canvasY - centerY, b.canvasX - centerX);
+                return angleA - angleB;
+            });
+            
+            // Remove canvas coordinates from final points
+            const orderedPoints = points.map(p => ({ x: p.x, y: p.y }));
+            
+            // Create new plot data with ordered points
+            const newPlot = {
+                id: 'Plot ' + newPlotNum,
+                plot_number: newPlotNum,
+                points: orderedPoints
+            };
+            
+            plotsData.push(newPlot);
+            
+            // Reorder circles to match the sorted order
+            const reorderedCircles = points.map(p => {
+                // Find the circle that matches this point
+                return newPlotPoints.find(circle => 
+                    Math.abs(circle.left - p.canvasX) < 0.1 && 
+                    Math.abs(circle.top - p.canvasY) < 0.1
+                );
+            }).filter(c => c); // Remove any undefined
+            
+            // Update circles to be red (normal color) and assign plot ID
+            reorderedCircles.forEach((circle, idx) => {
+                circle.set({
+                    fill: '#FF0000',
+                    plotId: newPlot.id,
+                    pointIndex: idx
+                });
+                
+                // Add click handler for merge mode and delete mode (same as existing plots)
+                circle.on('mousedown', function(e) {
+                    if (mergeMode) {
+                        e.e.stopPropagation();
+                        e.e.stopImmediatePropagation();
+                        togglePointForMerge(this);
+                        return false;
+                    } else if (deleteMode && mode === 'points') {
+                        e.e.stopPropagation();
+                        e.e.stopImmediatePropagation();
+                        selectPlotForDelete(this.plotId);
+                        return false;
+                    }
+                });
+                
+                // Also handle mouseup for better responsiveness
+                circle.on('mouseup', function(e) {
+                    if (mergeMode) {
+                        e.e.stopPropagation();
+                        e.e.stopImmediatePropagation();
+                        return false;
+                    }
+                });
+            });
+            
+            // Store reordered circles in plotPoints
+            plotPoints[newPlot.id] = reorderedCircles.length > 0 ? reorderedCircles : newPlotPoints;
+            
+            // If in lines mode, create polygon
+            if (mode === 'lines') {
+                // Use the reordered circles for polygon points
+                const circlesForPolygon = reorderedCircles.length > 0 ? reorderedCircles : newPlotPoints;
+                const polygonPoints = circlesForPolygon.map(c => ({ x: c.left, y: c.top }));
+                const polygon = new fabric.Polygon(polygonPoints, {
+                    fill: 'transparent',
+                    stroke: '#FF0000',
+                    strokeWidth: 2,
+                    opacity: 0.7,
+                    selectable: false, // Not selectable - only dots are draggable
+                    evented: true,
+                    plotId: newPlot.id,
+                    plotNumber: newPlotNum,
+                    hasControls: false,
+                    hasBorders: false,
+                    objectCaching: false // Disable caching for smooth real-time updates
+                });
+                
+                // Add click handler for delete mode
+                polygon.on('mousedown', function(e) {
+                    if (deleteMode) {
+                        e.e.stopPropagation();
+                        selectPlotForDelete(newPlot.id);
+                    }
+                });
+                
+                // Add event handlers for real-time polygon updates
+                circlesForPolygon.forEach(circle => {
+                    circle.on('moving', function() {
+                        // Update polygon in real-time
+                        const circles = plotPoints[newPlot.id];
+                        if (circles && polygon) {
+                            const newPoints = circles.map(c => ({
+                                x: c.left,
+                                y: c.top
+                            }));
+                            polygon.points = newPoints;
+                            polygon.dirty = true;
+                            
+                            // Ensure circles stay on top during drag
+                            circles.forEach(c => canvas.bringToFront(c));
+                        }
+                        canvas.renderAll();
+                    });
+                    
+                    circle.on('modified', () => updatePolygon(newPlot.id));
+                });
+                
+                plotObjects.push(polygon);
+                canvas.add(polygon);
+                
+                // Ensure proper z-order: background < polygon < circles < text
+                if (canvas.backgroundImage) {
+                    canvas.backgroundImage.moveTo(0); // Background at bottom
+                }
+                
+                // Add plot number label
+                const centerX = polygonPoints.reduce((sum, p) => sum + p.x, 0) / polygonPoints.length;
+                const centerY = polygonPoints.reduce((sum, p) => sum + p.y, 0) / polygonPoints.length;
+                const text = new fabric.Text(String(newPlotNum), {
+                    left: centerX,
+                    top: centerY,
+                    fontSize: 14,
+                    fill: '#000000',
+                    originX: 'center',
+                    originY: 'center',
+                    selectable: false,
+                    evented: false,
+                    plotId: newPlot.id
+                });
+                canvas.add(text);
+                
+                // Bring circles and text to front (above polygon)
+                circlesForPolygon.forEach(circle => canvas.bringToFront(circle));
+                canvas.bringToFront(text);
+            } else {
+                // In points mode, ensure circles are on top
+                const circlesForPoints = reorderedCircles.length > 0 ? reorderedCircles : newPlotPoints;
+                circlesForPoints.forEach(circle => canvas.bringToFront(circle));
+            }
+            
+            newPlotPoints = [];
+            enableCreateMode(); // Disable create mode
+            canvas.renderAll();
+            
+            console.log('New plot created:', newPlot);
+        }
+        
+        
+        function enableDeleteMode() {
+            deleteMode = !deleteMode;
+            createMode = false;
+            mergeMode = false;
+            selectedPointsForMerge = [];
+            selectedPlotForDelete = null;
+            const deleteBtn = document.getElementById('delete-btn');
+            const createBtn = document.getElementById('create-btn');
+            const mergeBtn = document.getElementById('merge-btn');
+            
+            if (deleteMode) {
+                deleteBtn.textContent = 'Cancel Delete';
+                deleteBtn.style.backgroundColor = '#f44336';
+                canvas.defaultCursor = 'pointer';
+                canvas.hoverCursor = 'pointer';
+                if (createBtn) createBtn.style.opacity = '0.5';
+                if (mergeBtn) mergeBtn.style.opacity = '0.5';
+                
+                // Highlight all plots for selection
+                if (mode === 'lines') {
+                    plotObjects.forEach(polygon => {
+                        polygon.set({ 
+                            stroke: '#FF0000',
+                            strokeWidth: 3,
+                            opacity: 0.9
+                        });
+                    });
+                } else {
+                    // In points mode, highlight all circles
+                    Object.values(plotPoints).flat().forEach(circle => {
+                        circle.set({ 
+                            fill: '#FF0000',
+                            stroke: '#FFFFFF',
+                            strokeWidth: 3
+                        });
+                    });
+                }
+                canvas.renderAll();
+            } else {
+                deleteBtn.textContent = 'Delete Plot';
+                deleteBtn.style.backgroundColor = '#f44336';
+                canvas.defaultCursor = 'default';
+                canvas.hoverCursor = 'default';
+                if (createBtn) createBtn.style.opacity = '1';
+                if (mergeBtn) mergeBtn.style.opacity = '1';
+                
+                // Reset plot highlighting
+                if (mode === 'lines') {
+                    plotObjects.forEach(polygon => {
+                        polygon.set({ 
+                            stroke: '#FF0000',
+                            strokeWidth: 2,
+                            opacity: 0.7
+                        });
+                    });
+                } else {
+                    Object.values(plotPoints).flat().forEach(circle => {
+                        circle.set({ 
+                            fill: '#FF0000',
+                            stroke: '#FFFFFF',
+                            strokeWidth: 2
+                        });
+                    });
+                }
+                canvas.renderAll();
+            }
+        }
+        
+        function selectPlotForDelete(plotId) {
+            if (!deleteMode) return;
+            
+            selectedPlotForDelete = plotId;
+            
+            // Highlight selected plot
+            if (mode === 'lines') {
+                plotObjects.forEach(polygon => {
+                    if (polygon.plotId === plotId) {
+                        polygon.set({ 
+                            stroke: '#FF0000',
+                            strokeWidth: 4,
+                            opacity: 1
+                        });
+                    } else {
+                        polygon.set({ 
+                            stroke: '#FF0000',
+                            strokeWidth: 2,
+                            opacity: 0.7
+                        });
+                    }
+                });
+            } else {
+                // In points mode, highlight circles of selected plot
+                Object.keys(plotPoints).forEach(id => {
+                    plotPoints[id].forEach(circle => {
+                        if (id === plotId) {
+                            circle.set({ 
+                                fill: '#FF0000',
+                                stroke: '#000000',
+                                strokeWidth: 4
+                            });
+                        } else {
+                            circle.set({ 
+                                fill: '#FF0000',
+                                stroke: '#FFFFFF',
+                                strokeWidth: 2
+                            });
+                        }
+                    });
+                });
+            }
+            
+            canvas.renderAll();
+            
+            // Update button text
+            const deleteBtn = document.getElementById('delete-btn');
+            if (deleteBtn) {
+                deleteBtn.textContent = 'Confirm Delete';
+                deleteBtn.style.backgroundColor = '#d32f2f';
+            }
+        }
+        
+        function renumberPlots() {
+            // Create a mapping of old IDs to new IDs
+            const idMapping = {};
+            
+            // Sort plots by their current plot_number to maintain order
+            plotsData.sort((a, b) => (a.plot_number || 0) - (b.plot_number || 0));
+            
+            // Renumber all plots sequentially starting from 1
+            plotsData.forEach((plot, index) => {
+                const newPlotNum = index + 1;
+                const oldPlotId = plot.id;
+                const oldPlotNum = plot.plot_number;
+                
+                plot.plot_number = newPlotNum;
+                plot.id = 'Plot ' + newPlotNum;
+                
+                // Store mapping for updating references
+                idMapping[oldPlotId] = plot.id;
+                
+                // Update plot number text on canvas
+                canvas.getObjects().forEach(obj => {
+                    if (obj.plotId === oldPlotId) {
+                        obj.set('plotId', plot.id);
+                        if (obj.type === 'text') {
+                            obj.set('text', String(newPlotNum));
+                        }
+                        if (obj.plotNumber !== undefined) {
+                            obj.set('plotNumber', newPlotNum);
+                        }
+                    }
+                });
+            });
+            
+            // Update plotPoints keys to use new IDs
+            const newPlotPoints = {};
+            Object.keys(plotPoints).forEach(oldId => {
+                if (idMapping[oldId]) {
+                    newPlotPoints[idMapping[oldId]] = plotPoints[oldId];
+                    // Update plotId in all circles
+                    if (plotPoints[oldId]) {
+                        plotPoints[oldId].forEach(circle => {
+                            circle.set('plotId', idMapping[oldId]);
+                        });
+                    }
+                }
+            });
+            Object.keys(plotPoints).forEach(key => {
+                if (!newPlotPoints[key] && !idMapping[key]) {
+                    delete plotPoints[key];
+                }
+            });
+            Object.assign(plotPoints, newPlotPoints);
+            
+            // Update plotObjects (polygons) IDs
+            plotObjects.forEach(polygon => {
+                if (idMapping[polygon.plotId]) {
+                    polygon.set('plotId', idMapping[polygon.plotId]);
+                }
+            });
+            
+            console.log('Plots renumbered:', plotsData.map(p => ({ id: p.id, num: p.plot_number })));
+        }
+        
+        function deletePlot(plotId) {
+            if (!plotId) return;
+            
+            // Remove from plotsData
+            const plotIndex = plotsData.findIndex(p => p.id === plotId);
+            if (plotIndex > -1) {
+                plotsData.splice(plotIndex, 1);
+            }
+            
+            // Remove circles
+            if (plotPoints[plotId]) {
+                plotPoints[plotId].forEach(circle => {
+                    canvas.remove(circle);
+                });
+                delete plotPoints[plotId];
+            }
+            
+            // Remove polygon if in lines mode
+            if (mode === 'lines') {
+                const polygonIndex = plotObjects.findIndex(p => p.plotId === plotId);
+                if (polygonIndex > -1) {
+                    const polygon = plotObjects[polygonIndex];
+                    canvas.remove(polygon);
+                    plotObjects.splice(polygonIndex, 1);
+                }
+            }
+            
+            // Remove plot number text
+            canvas.getObjects().forEach(obj => {
+                if (obj.type === 'text' && obj.plotId === plotId) {
+                    canvas.remove(obj);
+                }
+            });
+            
+            // Renumber all remaining plots sequentially (this will update plotPoints keys)
+            renumberPlots();
+            
+            selectedPlotForDelete = null;
+            enableDeleteMode(); // This will disable delete mode
+            
+            canvas.renderAll();
+            
+            console.log('Plot deleted:', plotId, '- All plots renumbered');
+            
+            // Show success message
+            const deleteBtn = document.getElementById('delete-btn');
+            if (deleteBtn) {
+                const originalText = deleteBtn.textContent;
+                deleteBtn.textContent = '✓ Deleted & Renumbered!';
+                deleteBtn.style.backgroundColor = '#4CAF50';
+                setTimeout(() => {
+                    deleteBtn.textContent = 'Delete Plot';
+                    deleteBtn.style.backgroundColor = '#f44336';
+                }, 2000);
+            }
+        }
+
+        // Handle canvas resize
+        function resizeCanvas() {
+            const container = document.getElementById('canvas-container');
+            if (!container) return;
+            
+            const containerWidth = Math.max(container.clientWidth - 20, 800);
+            const containerHeight = Math.max(container.clientHeight - 20, 600);
+            
+            canvas.setDimensions({
+                width: containerWidth,
+                height: containerHeight
+            });
+            
+            canvas.renderAll();
+        }
+
+        // Wait for DOM to be ready
+        if (document.readyState === 'loading') {
+            document.addEventListener('DOMContentLoaded', function() {
+                setTimeout(resizeCanvas, 100);
+            });
+        } else {
+            setTimeout(resizeCanvas, 100);
+        }
+        
+        window.addEventListener('resize', resizeCanvas);
+    </script>
+</body>
+</html>
+
+

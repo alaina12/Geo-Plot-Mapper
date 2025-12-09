@@ -41,8 +41,30 @@
             z-index: 1000;
             border: 1px solid #e0e0e0;
         }
+        #info-panel .close-btn {
+            position: absolute;
+            top: 5px;
+            right: 5px;
+            background: rgba(0, 0, 0, 0.1);
+            border: none;
+            border-radius: 50%;
+            width: 24px;
+            height: 24px;
+            cursor: pointer;
+            font-size: 16px;
+            line-height: 1;
+            color: #666;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            transition: all 0.2s;
+        }
+        #info-panel .close-btn:hover {
+            background: rgba(0, 0, 0, 0.2);
+            color: #000;
+        }
         .status-available { color: #4CAF50; font-weight: bold; }
-        .status-booked { color: #FF9800; font-weight: bold; }
+        .status-booked { color: #2196F3; font-weight: bold; }
         .status-sold { color: #F44336; font-weight: bold; }
         .plot-info {
             margin: 5px 0;
@@ -51,6 +73,71 @@
         }
         .plot-info:last-child {
             border-bottom: none;
+        }
+        .status-selector {
+            margin-top: 12px;
+            padding-top: 12px;
+            border-top: 2px solid #e0e0e0;
+        }
+        .status-selector-title {
+            font-weight: bold;
+            margin-bottom: 8px;
+            font-size: 12px;
+            color: #333;
+        }
+        .status-btn {
+            display: inline-block;
+            padding: 8px 16px;
+            margin: 4px 4px 4px 0;
+            border: 2px solid;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 13px;
+            font-weight: bold;
+            transition: all 0.2s ease;
+            background: white;
+            min-width: 80px;
+            text-align: center;
+        }
+        .status-btn:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 4px 8px rgba(0,0,0,0.2);
+        }
+        .status-btn.available {
+            color: #4CAF50;
+            border-color: #4CAF50;
+        }
+        .status-btn.available:hover {
+            background: #4CAF50;
+            color: white;
+        }
+        .status-btn.available.active {
+            background: #4CAF50;
+            color: white;
+        }
+        .status-btn.booked {
+            color: #2196F3;
+            border-color: #2196F3;
+        }
+        .status-btn.booked:hover {
+            background: #2196F3;
+            color: white;
+        }
+        .status-btn.booked.active {
+            background: #2196F3;
+            color: white;
+        }
+        .status-btn.sold {
+            color: #F44336;
+            border-color: #F44336;
+        }
+        .status-btn.sold:hover {
+            background: #F44336;
+            color: white;
+        }
+        .status-btn.sold.active {
+            background: #F44336;
+            color: white;
         }
     </style>
 </head>
@@ -67,6 +154,15 @@
         let plotsData;
         try {
             plotsData = JSON.parse('{{PLOTS_DATA}}');
+            // Log plot numbers for debugging
+            console.log('📊 Brochure viewer: Loaded', plotsData.length, 'plots');
+            if (plotsData.length > 0) {
+                console.log('First 5 plots:', plotsData.slice(0, 5).map(p => ({
+                    id: p.id,
+                    plot_number: p.plot_number,
+                    status: p.status
+                })));
+            }
         } catch (e) {
             console.error('Error parsing plots data:', e);
             plotsData = [];
@@ -99,11 +195,11 @@
         window.currentOffsetY = 0;
         window.currentRotation = 0;
 
-        // Status color mapping - subtle/subdued colors matching client's style
+        // Status color mapping - user-friendly colors
         const statusColors = {
-            'available': 'rgba(106, 168, 79, 1)',   // Light green - subtle
-            'booked': 'rgba(74, 86, 226, 1)',       // Light orange - subtle
-            'sold': 'rgba(217, 48, 37, 1)'           // Light red - subtle
+            'available': '#4CAF50',   // Green for available
+            'booked': '#2196F3',      // Blue for booked
+            'sold': '#F44336'         // Red for sold
         };
 
         // Dark borders for better visibility - matching client's dark border style
@@ -227,49 +323,23 @@
             let plotOffsetX = window.bgLeft !== undefined ? window.bgLeft : offsetX;
             let plotOffsetY = window.bgTop !== undefined ? window.bgTop : offsetY;
             
-            // For colored backgrounds with overlay, use full scale (1.0) to match overlay exactly
-            // For white backgrounds, use 70% to ensure they fit nicely
-            const plotScaleFactor = hasOverlay ? plotScale : plotScale * 0.70;
+            // Always use full scale to match background image dimensions exactly
+            // Since we always use the uploaded image as background, plots should match it perfectly
+            const plotScaleFactor = plotScale;
             
-            // First pass: calculate bounds of all plots
-            let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+            // Array to collect all polygons before grouping
+            const plotPolygonsArray = [];
             
-            plotsData.forEach((plot) => {
-                if (!plot.points || plot.points.length < 3) {
-                    return;
-                }
-                plot.points.forEach(point => {
-                    const x = (point.x * plotScaleFactor) + plotOffsetX;
-                    const y = (point.y * plotScaleFactor) + plotOffsetY;
-                    minX = Math.min(minX, x);
-                    minY = Math.min(minY, y);
-                    maxX = Math.max(maxX, x);
-                    maxY = Math.max(maxY, y);
-                });
-            });
-            
-            // Calculate center offset to center all plots in canvas
-            if (minX !== Infinity && minY !== Infinity) {
-                const plotWidth = maxX - minX;
-                const plotHeight = maxY - minY;
-                const canvasCenterX = canvas.width / 2;
-                const canvasCenterY = canvas.height / 2;
-                const plotCenterX = minX + plotWidth / 2;
-                const plotCenterY = minY + plotHeight / 2;
-                const centerOffsetX = canvasCenterX - plotCenterX;
-                const centerOffsetY = canvasCenterY - plotCenterY;
-                
-                // Apply centering offset
-                plotOffsetX += centerOffsetX;
-                plotOffsetY += centerOffsetY;
-            }
-            
+            // Scale and position plots to match background image exactly
+            // No centering - plots should align with background image at the same scale and offset
             plotsData.forEach((plot, index) => {
                 if (!plot.points || plot.points.length < 3) {
                     return;
                 }
 
-                // Scale and offset points to match background image, with centering
+                // Scale and offset points to match background image exactly
+                // point.x and point.y are in original image pixel coordinates
+                // Scale them by plotScaleFactor and add background offset to match background image position
                 const points = plot.points.map(point => ({
                     x: (point.x * plotScaleFactor) + plotOffsetX,
                     y: (point.y * plotScaleFactor) + plotOffsetY
@@ -293,7 +363,7 @@
                 const polygon = new fabric.Polygon(finalPoints, {
                     fill: statusColors[plot.status] || statusColors['available'],
                     stroke: statusBorders[plot.status] || statusBorders['available'],
-                    strokeWidth: 5,  // Thicker borders for better visibility
+                    strokeWidth: 2,  // Thinner borders for cleaner look
                     opacity: 1,      // Full opacity
                     selectable: false,
                     hoverCursor: 'pointer',
@@ -309,50 +379,130 @@
                 const originalStrokeWidth = polygon.strokeWidth;
                 const originalStroke = polygon.stroke;
 
-                // Store hover fill color (more opaque)
-                const hoverFill = statusColors[plot.status] || statusColors['available'];
-                const hoverFillMoreOpaque = hoverFill.replace('0.25', '0.55');  // More visible on hover
-
-                // Enhanced hover effect - more prominent like client's version
+                // Enhanced hover effect - visual feedback only (don't show info panel on hover)
                 polygon.on('mouseover', function() {
-                    // Increase fill opacity and border thickness on hover
+                    // Only show visual feedback, don't show info panel on hover
+                    // Check if this plot is not already selected
+                    if (currentSelectedPlot && currentSelectedPlot.id === plot.id) {
+                        return; // Already selected, don't change appearance
+                    }
+                    // Increase border thickness on hover for visual feedback
                     this.set({
-                        fill: hoverFillMoreOpaque,  // More visible fill
-                        strokeWidth: 4,             // Thicker border on hover
-                        stroke: '#212121'           // Even darker border on hover
+                        strokeWidth: 3,             // Slightly thicker border on hover
+                        stroke: '#212121'          // Dark border on hover
                     });
                     canvas.renderAll();
-                    showPlotInfo(plot);
                 });
 
                 polygon.on('mouseout', function() {
+                    // Only restore if this plot is not currently selected
+                    if (currentSelectedPlot && currentSelectedPlot.id === plot.id) {
+                        return; // Keep selected appearance
+                    }
                     // Restore original appearance
                     this.set({
-                        fill: originalFill,
                         strokeWidth: originalStrokeWidth,
                         stroke: originalStroke
                     });
                     canvas.renderAll();
-                    hidePlotInfo();
                 });
 
-                // Add click handler
+                // Add click handler to show status selector and keep it open
                 polygon.on('mousedown', function() {
                     console.log('Plot clicked:', plot.id, plot);
-                    // You can add click handling here, e.g., send to Streamlit
+                    // If clicking the same plot, toggle the panel
+                    if (currentSelectedPlot && currentSelectedPlot.id === plot.id) {
+                        hidePlotInfo();
+                        // Restore original appearance
+                        this.set({
+                            fill: originalFill,
+                            strokeWidth: originalStrokeWidth,
+                            stroke: originalStroke
+                        });
+                        canvas.renderAll();
+                    } else {
+                        // Restore previous selected plot appearance if any
+                        if (currentSelectedPolygon) {
+                            const prevPlot = currentSelectedPlot;
+                            const prevPolygon = currentSelectedPolygon;
+                            const prevOriginalFill = statusColors[prevPlot.status] || statusColors['available'];
+                            prevPolygon.set({
+                                fill: prevOriginalFill,
+                                strokeWidth: originalStrokeWidth,
+                                stroke: originalStroke
+                            });
+                        }
+                        // Show info panel for clicked plot (stays open until another plot is clicked or same plot is clicked again)
+                        showPlotInfo(plot, polygon);
+                        // Update clicked plot appearance to show it's selected (thicker border)
+                        this.set({
+                            strokeWidth: 3,
+                            stroke: '#212121'
+                        });
+                        canvas.renderAll();
+                    }
                 });
-
-                canvas.add(polygon);
                 
-                // Store original points for transformation
-                polygon.originalPoints = polygon.points.map(p => ({x: p.x, y: p.y}));
-                polygon.originalLeft = polygon.left;
-                polygon.originalTop = polygon.top;
+                // Store polygon reference for status updates
+                window.plotPolygons = window.plotPolygons || {};
+                window.plotPolygons[plot.id] = polygon;
+
+                // Add polygon to canvas first to ensure correct positioning
+                canvas.add(polygon);
+                plotPolygonsArray.push(polygon);
             });
+
+            // After all polygons are added and positioned correctly, group them
+            if (plotPolygonsArray.length > 0) {
+                // Check if group already exists in canvas (to avoid recreating on rerun)
+                const existingGroup = canvas.getObjects().find(obj => 
+                    obj.type === 'group' && 
+                    obj._objects && 
+                    obj._objects.length > 0 && 
+                    obj._objects.some(o => o.plotId)
+                );
+                
+                if (existingGroup) {
+                    // Reuse existing group
+                    window.plotGroup = existingGroup;
+                    console.log('Reusing existing plot group with', existingGroup._objects.length, 'polygons');
+                } else {
+                    // Remove old group reference if it exists but isn't in canvas
+                    if (window.plotGroup && !canvas.getObjects().includes(window.plotGroup)) {
+                        window.plotGroup = null;
+                    }
+                    
+                    // Remove polygons from canvas to group them
+                    plotPolygonsArray.forEach(polygon => {
+                        canvas.remove(polygon);
+                    });
+                    
+                    // Create group directly - Fabric.js handles positioning automatically
+                    window.plotGroup = new fabric.Group(plotPolygonsArray, {
+                        selectable: false,
+                        originX: 'center',
+                        originY: 'center',
+                        objectCaching: false,
+                        evented: true
+                    });
+                    
+                    // Store original position (Fabric.js calculated this automatically)
+                    window.plotGroup.originalLeft = window.plotGroup.left;
+                    window.plotGroup.originalTop = window.plotGroup.top;
+                    window.plotGroup.originalScaleX = 1.0;
+                    window.plotGroup.originalScaleY = 1.0;
+                    window.plotGroup.originalAngle = 0;
+                    
+                    // Add group to canvas
+                    canvas.add(window.plotGroup);
+                    
+                    console.log('Created plot group with', plotPolygonsArray.length, 'polygons at', window.plotGroup.left, window.plotGroup.top);
+                }
+            }
 
             canvas.renderAll();
             
-            // Make applyTransform function available globally
+            // Make applyTransform function available globally - now scales the GROUP
             window.applyBrochureTransform = function() {
                 const scale = window.currentScale || 1.0;
                 const offsetX = window.currentOffsetX || 0;
@@ -361,61 +511,84 @@
                 
                 console.log('applyBrochureTransform called with:', {scale, offsetX, offsetY, rotation});
                 
-                const allObjects = canvas.getObjects();
-                const plotPolygons = allObjects.filter(obj => obj.plotId);
-                
-                console.log('Found', plotPolygons.length, 'plot polygons');
-                
-                plotPolygons.forEach(polygon => {
-                    if (!polygon.originalPoints) {
-                        // Store original points if not already stored
-                        polygon.originalPoints = polygon.points.map(p => ({x: p.x, y: p.y}));
-                        polygon.originalLeft = polygon.left;
-                        polygon.originalTop = polygon.top;
+                // Get or find the plot group
+                let plotGroup = window.plotGroup;
+                if (!plotGroup) {
+                    // Try to find existing group in canvas
+                    const allObjects = canvas.getObjects();
+                    plotGroup = allObjects.find(obj => obj.type === 'group' && obj._objects && obj._objects.some(o => o.plotId));
+                    if (plotGroup) {
+                        window.plotGroup = plotGroup;
+                        // Store original properties if not already stored
+                        if (!plotGroup.originalLeft) {
+                            plotGroup.originalLeft = plotGroup.left;
+                            plotGroup.originalTop = plotGroup.top;
+                            plotGroup.originalScaleX = plotGroup.scaleX || 1.0;
+                            plotGroup.originalScaleY = plotGroup.scaleY || 1.0;
+                            plotGroup.originalAngle = plotGroup.angle || 0;
+                        }
                     }
-                    
-                    const origCenterX = polygon.originalPoints.reduce((sum, p) => sum + p.x, 0) / polygon.originalPoints.length;
-                    const origCenterY = polygon.originalPoints.reduce((sum, p) => sum + p.y, 0) / polygon.originalPoints.length;
-                    
-                    const transformedPoints = polygon.originalPoints.map(p => {
-                        let x = p.x - origCenterX;
-                        let y = p.y - origCenterY;
-                        
-                        x *= scale;
-                        y *= scale;
-                        
-                        const angleRad = (rotation * Math.PI) / 180;
-                        const cos = Math.cos(angleRad);
-                        const sin = Math.sin(angleRad);
-                        const newX = x * cos - y * sin;
-                        const newY = x * sin + y * cos;
-                        
-                        return {
-                            x: newX + origCenterX + offsetX,
-                            y: newY + origCenterY + offsetY
-                        };
-                    });
-                    
-                    polygon.set({
-                        points: transformedPoints,
-                        left: polygon.originalLeft + offsetX,
-                        top: polygon.originalTop + offsetY,
-                        angle: rotation
-                    });
+                }
+                
+                if (!plotGroup) {
+                    console.warn('Plot group not found, cannot apply transform');
+                    return;
+                }
+                
+                // Ensure original properties are stored
+                if (plotGroup.originalLeft === undefined) {
+                    plotGroup.originalLeft = plotGroup.left;
+                    plotGroup.originalTop = plotGroup.top;
+                    plotGroup.originalScaleX = 1.0;
+                    plotGroup.originalScaleY = 1.0;
+                    plotGroup.originalAngle = 0;
+                }
+                
+                // Apply scale to the group (this scales all polygons together as one unit)
+                plotGroup.set({
+                    scaleX: scale,
+                    scaleY: scale,
+                    angle: rotation,
+                    left: plotGroup.originalLeft + offsetX,
+                    top: plotGroup.originalTop + offsetY
                 });
                 
+                plotGroup.setCoords();
                 canvas.renderAll();
-                console.log('Transform applied and canvas rendered');
+                
+                console.log('Group transform applied - scale:', scale, 'rotation:', rotation, 'offset:', offsetX, offsetY);
             };
         }
 
-        function showPlotInfo(plot) {
+        // Store current selected plot and polygon
+        let currentSelectedPlot = null;
+        let currentSelectedPolygon = null;
+        
+        function showPlotInfo(plot, polygon) {
             const infoPanel = document.getElementById('info-panel');
             const plotDetails = document.getElementById('plot-details');
             
-            let html = `<div class="plot-info">
+            currentSelectedPlot = plot;
+            currentSelectedPolygon = polygon;
+            
+            // Get plot number for display - should match the number in plot.id
+            // Use plot_number if available (this is the source of truth after renumbering)
+            let displayPlotNumber = plot.plot_number;
+            if (displayPlotNumber === null || displayPlotNumber === undefined || displayPlotNumber === 0) {
+                // Fallback: Extract number from plot.id (e.g., "Plot 1" -> 1)
+                const idMatch = String(plot.id).match(/(\d+)/);
+                if (idMatch) {
+                    displayPlotNumber = parseInt(idMatch[1]);
+                } else {
+                    displayPlotNumber = plot.id;  // Fallback to full ID if no number found
+                }
+            }
+            
+            let html = `<button class="close-btn" onclick="hidePlotInfo()" title="Close">×</button>
+                <div class="plot-info">
+                <strong>Plot Number:</strong> ${displayPlotNumber}<br>
                 <strong>Plot ID:</strong> ${plot.id}<br>
-                <strong>Status:</strong> <span class="status-${plot.status}">${plot.status}</span><br>`;
+                <strong>Current Status:</strong> <span class="status-${plot.status}">${plot.status}</span><br>`;
             
             if (plot.lat !== null && plot.lat !== undefined && 
                 plot.lon !== null && plot.lon !== undefined) {
@@ -424,15 +597,99 @@
                     Lon: ${plot.lon.toFixed(6)}<br>`;
             }
             
-            html += `</div>`;
+            // Add status selector
+            html += `<div class="status-selector">
+                <div class="status-selector-title">Change Status:</div>
+                <button class="status-btn available ${plot.status === 'available' ? 'active' : ''}" 
+                        onclick="updatePlotStatus('available')">
+                    🟢 Available
+                </button>
+                <button class="status-btn booked ${plot.status === 'booked' ? 'active' : ''}" 
+                        onclick="updatePlotStatus('booked')">
+                    🔵 Booked
+                </button>
+                <button class="status-btn sold ${plot.status === 'sold' ? 'active' : ''}" 
+                        onclick="updatePlotStatus('sold')">
+                    🔴 Sold
+                </button>
+            </div></div>`;
             
             plotDetails.innerHTML = html;
             infoPanel.style.display = 'block';
         }
-
+        
         function hidePlotInfo() {
-            document.getElementById('info-panel').style.display = 'none';
+            const infoPanel = document.getElementById('info-panel');
+            infoPanel.style.display = 'none';
+            
+            // Restore selected plot appearance
+            if (currentSelectedPolygon) {
+                const plot = currentSelectedPlot;
+                const originalFill = statusColors[plot.status] || statusColors['available'];
+                currentSelectedPolygon.set({
+                    fill: originalFill,
+                    strokeWidth: 5,
+                    stroke: '#424242'
+                });
+                canvas.renderAll();
+            }
+            
+            currentSelectedPlot = null;
+            currentSelectedPolygon = null;
         }
+        
+        // Function to update plot status
+        function updatePlotStatus(newStatus) {
+            if (!currentSelectedPlot || !currentSelectedPolygon) {
+                return;
+            }
+            
+            const plotId = currentSelectedPlot.id;
+            const oldStatus = currentSelectedPlot.status;
+            
+            // Don't update if status is the same
+            if (oldStatus === newStatus) {
+                return;
+            }
+            
+            // Update plot data
+            currentSelectedPlot.status = newStatus;
+            
+            // Update polygon color
+            const newColor = statusColors[newStatus] || statusColors['available'];
+            currentSelectedPolygon.set({
+                fill: newColor
+            });
+            
+            // Update stored original fill for hover restoration
+            currentSelectedPolygon.originalFill = newColor;
+            
+            canvas.renderAll();
+            
+            // Send status update to parent (Streamlit)
+            try {
+                if (window.parent) {
+                    window.parent.postMessage({
+                        type: 'plot_status_update',
+                        plotId: plotId,
+                        newStatus: newStatus,
+                        oldStatus: oldStatus,
+                        timestamp: Date.now()
+                    }, '*');
+                }
+            } catch (e) {
+                console.error('Failed to send status update:', e);
+            }
+            
+            // Update the info panel to reflect new status
+            showPlotInfo(currentSelectedPlot, currentSelectedPolygon);
+            
+            console.log(`Plot ${plotId} status updated from ${oldStatus} to ${newStatus}`);
+        }
+        
+        // Make updatePlotStatus available globally
+        window.updatePlotStatus = updatePlotStatus;
+
 
         // Handle canvas resize
         function resizeCanvas() {

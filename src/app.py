@@ -1,5 +1,6 @@
 # app2.py - Contour-Based Plot Detection with Sequential Numbering
 import streamlit as st
+import streamlit.components.v1 as components
 import cv2
 import numpy as np
 import math
@@ -16,6 +17,7 @@ import os
 import sys
 import base64
 import random
+import json
 
 # Add parent directory to path to find components module
 parent_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -1097,6 +1099,411 @@ def recalculate_pixel_from_coordinates(ref_lat, ref_lon, ref_x, ref_y, new_lat, 
     return calculated_x, calculated_y
 
 
+def renumber_plots_sequentially(plots, selected_plot_id, direction, numbering_mode='row', second_plot_id=None):
+    """
+    Renumbers all plots sequentially based on selected plot and direction.
+    Uses snake/alternating pattern for natural flow.
+    
+    Args:
+        plots: List of plot dictionaries with 'plot_id', 'corners', 'plot_number'
+        selected_plot_id: ID of the plot that should be Plot 1
+        direction: Direction to number:
+            - Row mode: 'left' = left-to-right, 'right' = right-to-left
+            - Column mode: 'left' = top-to-bottom, 'right' = bottom-to-top
+        numbering_mode: 'row' for row-wise, 'column' for column-wise
+        second_plot_id: Optional ID of plot that should be Plot 2 (for handling spanning plots)
+    
+    Returns:
+        Updated plots list with new plot numbers
+    """
+    if not plots or not selected_plot_id:
+        return plots
+    
+    # Calculate center coordinates for all plots
+    plots_with_centers = []
+    for plot in plots:
+        corners = plot.get('corners', {})
+        if not corners:
+            continue
+        
+        # Calculate center from corners
+        center_x = sum([corners[c].get('x', 0) for c in ['A', 'B', 'C', 'D']]) / 4
+        center_y = sum([corners[c].get('y', 0) for c in ['A', 'B', 'C', 'D']]) / 4
+        
+        plots_with_centers.append({
+            'plot': plot,
+            'center_x': center_x,
+            'center_y': center_y
+        })
+    
+    if not plots_with_centers:
+        return plots
+    
+    # Find the selected plot
+    selected_plot_data = None
+    for plot_data in plots_with_centers:
+        if plot_data['plot']['plot_id'] == selected_plot_id:
+            selected_plot_data = plot_data
+            break
+    
+    if not selected_plot_data:
+        print(f"⚠️ Selected plot {selected_plot_id} not found")
+        return plots
+    
+    # Find the second plot if manually specified
+    second_plot_data = None
+    if second_plot_id:
+        for plot_data in plots_with_centers:
+            if plot_data['plot']['plot_id'] == second_plot_id:
+                second_plot_data = plot_data
+                break
+        
+        if not second_plot_data:
+            print(f"⚠️ Second plot {second_plot_id} not found")
+            return plots
+    
+    if numbering_mode == 'row':
+        # ========== ROW-WISE NUMBERING (SNAKE PATTERN: LTR→RTL→LTR) ==========
+        # Group plots into rows based on Y coordinate
+        rows = []
+        y_tolerance = 50
+        
+        for plot_data in plots_with_centers:
+            assigned = False
+            for row in rows:
+                if row:
+                    avg_y = sum(p['center_y'] for p in row) / len(row)
+                    if abs(plot_data['center_y'] - avg_y) < y_tolerance:
+                        row.append(plot_data)
+                        assigned = True
+                        break
+            if not assigned:
+                rows.append([plot_data])
+        
+        # Sort rows top to bottom
+        rows.sort(key=lambda r: sum(p['center_y'] for p in r) / len(r))
+        
+        # Sort each row left to right
+        for row in rows:
+            row.sort(key=lambda p: p['center_x'])
+        
+        # Find selected plot's row
+        selected_row_idx = None
+        for row_idx, row in enumerate(rows):
+            for plot_data in row:
+                if plot_data['plot']['plot_id'] == selected_plot_id:
+                    selected_row_idx = row_idx
+                    break
+            if selected_row_idx is not None:
+                break
+        
+        if selected_row_idx is None:
+            print(f"⚠️ Selected plot not found")
+            return plots
+        
+        # Handle manual Plot 2 selection
+        if second_plot_data:
+            # Manually assign Plot 1 and Plot 2
+            selected_plot_data['plot']['plot_number'] = 1
+            selected_plot_data['plot']['plot_id'] = "Plot 1"
+            second_plot_data['plot']['plot_number'] = 2
+            second_plot_data['plot']['plot_id'] = "Plot 2"
+            
+            # Find Plot 2's position in the grid
+            second_row_idx = None
+            second_col_idx = None
+            for row_idx, row in enumerate(rows):
+                for col_idx, plot_data in enumerate(row):
+                    if plot_data['plot']['plot_id'] == second_plot_id:
+                        second_row_idx = row_idx
+                        second_col_idx = col_idx
+                        break
+                if second_row_idx is not None:
+                    break
+            
+            # Create ordered list starting from Plot 2's row
+            ordered_rows = rows[second_row_idx:] + rows[:second_row_idx]
+            
+            # Number from Plot 3 onwards, starting from Plot 2's position
+            current_number = 3
+            for idx, row in enumerate(ordered_rows):
+                # Determine direction for this row
+                if idx == 0:
+                    # First row (Plot 2's row): use selected direction
+                    row_direction = direction if direction else 'left'
+                else:
+                    # Alternate for subsequent rows
+                    if direction == 'left':
+                        row_direction = 'left' if (idx % 2 == 0) else 'right'
+                    else:
+                        row_direction = 'right' if (idx % 2 == 0) else 'left'
+                
+                # Number this row, skipping already numbered plots
+                if row_direction == 'left':
+                    for col_idx, plot_data in enumerate(row):
+                        if plot_data['plot']['plot_number'] in [1, 2]:
+                            continue
+                        # For Plot 2's row, start after Plot 2
+                        if idx == 0 and col_idx <= second_col_idx:
+                            continue
+                        plot_data['plot']['plot_number'] = current_number
+                        plot_data['plot']['plot_id'] = f"Plot {current_number}"
+                        current_number += 1
+                else:
+                    for col_idx, plot_data in enumerate(reversed(row)):
+                        if plot_data['plot']['plot_number'] in [1, 2]:
+                            continue
+                        rev_col_idx = len(row) - 1 - col_idx
+                        if idx == 0 and rev_col_idx <= second_col_idx:
+                            continue
+                        plot_data['plot']['plot_number'] = current_number
+                        plot_data['plot']['plot_id'] = f"Plot {current_number}"
+                        current_number += 1
+            
+            print(f"✅ Renumbered {len(plots)} plots row-wise with manual Plot 2")
+            print(f"   Plot 1: {selected_plot_id}")
+            print(f"   Plot 2: {second_plot_id} (manually selected)")
+            return plots
+        
+        # Create ordered list of rows starting from selected row
+        ordered_rows = rows[selected_row_idx:] + rows[:selected_row_idx]
+        
+        # Number with alternating direction (SNAKE pattern)
+        current_number = 1
+        for idx, row in enumerate(ordered_rows):
+            # Determine direction for this row
+            if direction == 'left':
+                # First row: LTR, Second: RTL, Third: LTR...
+                row_direction = 'left' if (idx % 2 == 0) else 'right'
+            else:
+                # First row: RTL, Second: LTR, Third: RTL...
+                row_direction = 'right' if (idx % 2 == 0) else 'left'
+            
+            if row_direction == 'left':
+                # Left to right
+                for plot_data in row:
+                    plot_data['plot']['plot_number'] = current_number
+                    plot_data['plot']['plot_id'] = f"Plot {current_number}"
+                    current_number += 1
+            else:
+                # Right to left
+                for plot_data in reversed(row):
+                    plot_data['plot']['plot_number'] = current_number
+                    plot_data['plot']['plot_id'] = f"Plot {current_number}"
+                    current_number += 1
+        
+        print(f"✅ Renumbered {len(plots)} plots row-wise (SNAKE pattern)")
+        print(f"   Starting from: {selected_plot_id} → Plot 1")
+        print(f"   Direction: {'LTR→RTL→LTR...' if direction == 'left' else 'RTL→LTR→RTL...'}")
+        
+    else:
+        # ========== COLUMN-WISE NUMBERING (SNAKE PATTERN: Top→Bottom→Top) ==========
+        # Group plots into columns based on X coordinate
+        columns = []
+        x_tolerance = 50
+        
+        for plot_data in plots_with_centers:
+            assigned = False
+            for col in columns:
+                if col:
+                    avg_x = sum(p['center_x'] for p in col) / len(col)
+                    if abs(plot_data['center_x'] - avg_x) < x_tolerance:
+                        col.append(plot_data)
+                        assigned = True
+                        break
+            if not assigned:
+                columns.append([plot_data])
+        
+        # Sort columns left to right
+        columns.sort(key=lambda c: sum(p['center_x'] for p in c) / len(c))
+        
+        # Sort each column top to bottom
+        for col in columns:
+            col.sort(key=lambda p: p['center_y'])
+        
+        # Find selected plot's column
+        selected_col_idx = None
+        for col_idx, col in enumerate(columns):
+            for plot_data in col:
+                if plot_data['plot']['plot_id'] == selected_plot_id:
+                    selected_col_idx = col_idx
+                    break
+            if selected_col_idx is not None:
+                break
+        
+        if selected_col_idx is None:
+            print(f"⚠️ Selected plot not found")
+            return plots
+        
+        # Handle manual Plot 2 selection
+        if second_plot_data:
+            print(f"🔍 MANUAL PLOT 2 MODE ACTIVATED")
+            
+            # STEP 1: Clear all existing numbers and assign Plot 1 and Plot 2
+            for plot in plots:
+                plot['plot_number'] = None  # Clear all numbers first
+            
+            # Now assign Plot 1 and Plot 2
+            selected_plot_data['plot']['plot_number'] = 1
+            selected_plot_data['plot']['plot_id'] = "Plot 1"
+            second_plot_data['plot']['plot_number'] = 2
+            second_plot_data['plot']['plot_id'] = "Plot 2"
+            
+            # Find positions
+            plot1_col_idx = selected_col_idx
+            plot1_row_idx = None
+            for row_idx, plot_data in enumerate(columns[plot1_col_idx]):
+                if plot_data['plot']['plot_id'] == selected_plot_id:
+                    plot1_row_idx = row_idx
+                    break
+            
+            second_col_idx = None
+            second_row_idx = None
+            for col_idx, col in enumerate(columns):
+                for row_idx, plot_data in enumerate(col):
+                    if plot_data['plot']['plot_id'] == second_plot_id:
+                        second_col_idx = col_idx
+                        second_row_idx = row_idx
+                        break
+                if second_col_idx is not None:
+                    break
+            
+            print(f"   Plot 1: {selected_plot_id} at column {plot1_col_idx}, row {plot1_row_idx}")
+            print(f"   Plot 2: {second_plot_id} at column {second_col_idx}, row {second_row_idx}")
+            print(f"   Total columns: {len(columns)}, Direction: {'Move Right' if direction == 'left' else 'Move Left'}")
+            
+            # STEP 2: Create column order starting from Plot 2's column
+            # Plot 2's column is the starting point
+            current_number = 3
+            
+            # Number Plot 2's column going DOWN (top to bottom)
+            print(f"\n   📍 COLUMN {second_col_idx} (Plot 2's column) - Going DOWN:")
+            for row_idx in range(len(columns[second_col_idx])):
+                plot_data = columns[second_col_idx][row_idx]
+                if plot_data['plot'].get('plot_number') in [1, 2]:
+                    continue  # Skip Plot 1 and Plot 2
+                plot_data['plot']['plot_number'] = current_number
+                plot_data['plot']['plot_id'] = f"Plot {current_number}"
+                print(f"      Row {row_idx}: {plot_data['plot']['plot_id']} → {current_number}")
+                current_number += 1
+            
+            # STEP 3: Determine column order for remaining columns
+            # Strategy: After Plot 2's column, continue in the specified direction
+            # For "Move Right" (direction='left'), if Plot 2 is at rightmost (col 8),
+            # the natural continuation is to move LEFT (7, 6, 5, 4, 3, 2, 1, 0)
+            
+            if direction == 'left':
+                # "Move Right" was selected, but Plot 2 is already at the rightmost column
+                # So continue by moving LEFT through remaining columns
+                if second_col_idx == len(columns) - 1:
+                    # Plot 2 is at rightmost, go LEFT
+                    remaining_cols = list(range(second_col_idx - 1, -1, -1))
+                    print(f"   Plot 2 at rightmost column, continuing LEFT: {remaining_cols}")
+                else:
+                    # Plot 2 not at edge, continue RIGHT then wrap
+                    remaining_cols = list(range(second_col_idx + 1, len(columns))) + list(range(0, second_col_idx))
+                    print(f"   Continuing RIGHT from Plot 2: {remaining_cols}")
+            else:
+                # "Move Left" was selected
+                if second_col_idx == 0:
+                    # Plot 2 is at leftmost, go RIGHT
+                    remaining_cols = list(range(1, len(columns)))
+                    print(f"   Plot 2 at leftmost column, continuing RIGHT: {remaining_cols}")
+                else:
+                    # Plot 2 not at edge, continue LEFT then wrap
+                    remaining_cols = list(range(second_col_idx - 1, -1, -1)) + list(range(len(columns) - 1, second_col_idx, -1))
+                    print(f"   Continuing LEFT from Plot 2: {remaining_cols}")
+            
+            print(f"\n   Remaining columns order: {remaining_cols}")
+            
+            # STEP 4: Number remaining columns with SNAKE pattern (alternate UP/DOWN)
+            for idx, col_idx in enumerate(remaining_cols):
+                col = columns[col_idx]
+                
+                # Determine direction: Plot 2's col went DOWN, so first remaining col goes UP, then DOWN, then UP...
+                if idx % 2 == 0:
+                    # Even index: go UP (bottom to top)
+                    direction_str = "UP (bottom→top)"
+                    print(f"\n   📍 COLUMN {col_idx} - Going {direction_str}:")
+                    for row_idx in range(len(col) - 1, -1, -1):
+                        plot_data = col[row_idx]
+                        if plot_data['plot'].get('plot_number') in [1, 2]:
+                            print(f"      Row {row_idx}: {plot_data['plot']['plot_id']} → SKIP (already {plot_data['plot'].get('plot_number')})")
+                            continue
+                        plot_data['plot']['plot_number'] = current_number
+                        plot_data['plot']['plot_id'] = f"Plot {current_number}"
+                        print(f"      Row {row_idx}: {plot_data['plot']['plot_id']} → {current_number}")
+                        current_number += 1
+                else:
+                    # Odd index: go DOWN (top to bottom)
+                    direction_str = "DOWN (top→bottom)"
+                    print(f"\n   📍 COLUMN {col_idx} - Going {direction_str}:")
+                    for row_idx in range(len(col)):
+                        plot_data = col[row_idx]
+                        if plot_data['plot'].get('plot_number') in [1, 2]:
+                            print(f"      Row {row_idx}: {plot_data['plot']['plot_id']} → SKIP (already {plot_data['plot'].get('plot_number')})")
+                            continue
+                        plot_data['plot']['plot_number'] = current_number
+                        plot_data['plot']['plot_id'] = f"Plot {current_number}"
+                        print(f"      Row {row_idx}: {plot_data['plot']['plot_id']} → {current_number}")
+                        current_number += 1
+            
+            print(f"\n✅ Renumbered ALL plots: 1 to {current_number - 1}")
+            return plots
+        
+        # Create ordered list of columns starting from selected column
+        # Direction determines which way we move between columns
+        if direction == 'left':
+            # Move right through columns
+            ordered_columns = columns[selected_col_idx:] + columns[:selected_col_idx]
+        else:
+            # Move left through columns
+            ordered_columns = list(reversed(columns[:selected_col_idx+1])) + list(reversed(columns[selected_col_idx+1:]))
+        
+        # Number with alternating direction (SNAKE pattern)
+        # direction='left' means Top-to-Bottom first
+        # direction='right' means Bottom-to-Top first
+        current_number = 1
+        
+        print(f"🔍 AUTOMATIC MODE (no manual Plot 2)")
+        print(f"   Starting column: {selected_col_idx}")
+        print(f"   Direction: {'Top→Bottom (then alternating)' if direction == 'left' else 'Bottom→Top (then alternating)'}")
+        
+        for idx, col in enumerate(ordered_columns):
+            # Determine direction for this column
+            if direction == 'left':
+                # direction='left' means start Top-to-Bottom
+                # First column: Top→Bottom, Second: Bottom→Top, Third: Top→Bottom...
+                col_direction = 'top' if (idx % 2 == 0) else 'bottom'
+            else:
+                # direction='right' means start Bottom-to-Top
+                # First column: Bottom→Top, Second: Top→Bottom, Third: Bottom→Top...
+                col_direction = 'bottom' if (idx % 2 == 0) else 'top'
+            
+            direction_str = "DOWN (top→bottom)" if col_direction == 'top' else "UP (bottom→top)"
+            print(f"\n   📍 COLUMN {columns.index(col)} (idx={idx}) - Going {direction_str}:")
+            
+            if col_direction == 'top':
+                # Top to bottom
+                for row_idx, plot_data in enumerate(col):
+                    plot_data['plot']['plot_number'] = current_number
+                    plot_data['plot']['plot_id'] = f"Plot {current_number}"
+                    print(f"      Row {row_idx}: {plot_data['plot']['plot_id']} → {current_number}")
+                    current_number += 1
+            else:
+                # Bottom to top
+                for row_idx in range(len(col) - 1, -1, -1):
+                    plot_data = col[row_idx]
+                    plot_data['plot']['plot_number'] = current_number
+                    plot_data['plot']['plot_id'] = f"Plot {current_number}"
+                    print(f"      Row {row_idx}: {plot_data['plot']['plot_id']} → {current_number}")
+                    current_number += 1
+        
+        print(f"\n Renumbered ALL plots: 1 to {current_number - 1}")
+    
+    return plots
+
+
 def create_brochure_canvas_image():
     """
     Builds a colored brochure-style preview image using detected plots.
@@ -1164,14 +1571,128 @@ def ndarray_to_data_url(image_array):
 
 # --- STREAMLIT UI ---
 
-# Get the directory of the current script and construct path to favicon
+# Get the directory of the current script and construct path to favicon and CSS
 script_dir = os.path.dirname(os.path.abspath(__file__))
-favicon_path = os.path.join(os.path.dirname(script_dir), "favicon", "plot-icon.ico")
+favicon_path = os.path.join(os.path.dirname(script_dir), "favicon", "plot_icon.ico")
+css_path = os.path.join(script_dir, "styles.css")
 
 st.set_page_config(layout="wide", page_title="Geo Plot Mapper", page_icon=favicon_path)
 
-PLOT_STATUS_OPTIONS = ["available", "booked", "sold"]
+# Load external CSS file
+with open(css_path, 'r') as f:
+    st.markdown(f"<style>{f.read()}</style>", unsafe_allow_html=True)
 
+# Additional inline CSS for navigation buttons with maximum specificity
+st.markdown("""
+<style>
+/* MAXIMUM SPECIFICITY FOR NEXT BUTTONS */
+div[data-testid="column"] div[data-testid="stVerticalBlock"] div[data-testid="stButton"] button[key*="next_step"][kind="primary"],
+div[data-testid="column"] button[key*="next_step"],
+button[key*="next_step"] {
+    background-color: #1e40af !important;
+    background-image: none !important;
+    background: #1e40af !important;
+    color: #ffffff !important;
+    border: none !important;
+    border-radius: 50px !important;
+    padding: 14px 28px 14px 20px !important;
+    font-weight: 700 !important;
+    font-size: 14px !important;
+    letter-spacing: 2px !important;
+    text-transform: uppercase !important;
+    display: inline-flex !important;
+    align-items: center !important;
+    justify-content: center !important;
+    gap: 12px !important;
+    box-shadow: 0 8px 20px rgba(30, 64, 175, 0.35) !important;
+    transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1) !important;
+    cursor: pointer !important;
+    min-height: 48px !important;
+    width: 100% !important;
+}
+
+button[key*="next_step"]::before {
+    content: "›" !important;
+    order: 1 !important;
+    display: inline-flex !important;
+    align-items: center !important;
+    justify-content: center !important;
+    width: 32px !important;
+    height: 32px !important;
+    border-radius: 50% !important;
+    background: #ffffff !important;
+    color: #1e40af !important;
+    font-size: 24px !important;
+    font-weight: 900 !important;
+    line-height: 1 !important;
+    flex-shrink: 0 !important;
+    margin-left: 8px !important;
+}
+
+div[data-testid="column"] button[key*="next_step"]:hover,
+button[key*="next_step"]:hover {
+    background-color: #2563eb !important;
+    background: #2563eb !important;
+    box-shadow: 0 12px 28px rgba(37, 99, 235, 0.4) !important;
+    transform: translateY(-2px) scale(1.02) !important;
+}
+
+/* MAXIMUM SPECIFICITY FOR PREVIOUS BUTTONS */
+div[data-testid="column"] div[data-testid="stVerticalBlock"] div[data-testid="stButton"] button[key*="prev_step"],
+div[data-testid="column"] button[key*="prev_step"],
+button[key*="prev_step"] {
+    background-color: #ffffff !important;
+    background-image: none !important;
+    background: #ffffff !important;
+    color: #1f2937 !important;
+    border: 2px solid #d1d5db !important;
+    border-radius: 50px !important;
+    padding: 14px 20px 14px 28px !important;
+    font-weight: 600 !important;
+    font-size: 14px !important;
+    letter-spacing: 2px !important;
+    text-transform: uppercase !important;
+    display: inline-flex !important;
+    align-items: center !important;
+    justify-content: center !important;
+    gap: 12px !important;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.08) !important;
+    transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1) !important;
+    cursor: pointer !important;
+    min-height: 48px !important;
+    width: 100% !important;
+}
+
+button[key*="prev_step"]::after {
+    content: "‹" !important;
+    order: -1 !important;
+    display: inline-flex !important;
+    align-items: center !important;
+    justify-content: center !important;
+    width: 32px !important;
+    height: 32px !important;
+    border-radius: 50% !important;
+    background: #1e40af !important;
+    color: #ffffff !important;
+    font-size: 24px !important;
+    font-weight: 900 !important;
+    line-height: 1 !important;
+    flex-shrink: 0 !important;
+    margin-right: 8px !important;
+}
+
+div[data-testid="column"] button[key*="prev_step"]:hover,
+button[key*="prev_step"]:hover {
+    background-color: #f9fafb !important;
+    background: #f9fafb !important;
+    border-color: #1e40af !important;
+    box-shadow: 0 8px 20px rgba(0, 0, 0, 0.12) !important;
+    transform: translateY(-2px) scale(1.02) !important;
+}
+</style>
+""", unsafe_allow_html=True)
+
+PLOT_STATUS_OPTIONS = ["available", "booked", "sold"]
 # Session state
 if 'plots' not in st.session_state:
     st.session_state.plots = []
@@ -1181,6 +1702,7 @@ if 'detection_image' not in st.session_state:
     st.session_state.detection_image = None
 if 'px_to_ft' not in st.session_state:
     st.session_state.px_to_ft = 0.5
+# Initialize current_step
 if 'current_step' not in st.session_state:
     st.session_state.current_step = 1
 if 'coordinates_detected' not in st.session_state:
@@ -1203,162 +1725,198 @@ if 'edited_plot_coordinates' not in st.session_state:
     st.session_state.edited_plot_coordinates = None
 if 'original_image_base64' not in st.session_state:
     st.session_state.original_image_base64 = None
+if 'original_uploaded_image_base64' not in st.session_state:
+    st.session_state.original_uploaded_image_base64 = None
 if 'edits_made_in_step2' not in st.session_state:
     st.session_state.edits_made_in_step2 = False
 
-# Workflow Sidebar - matching wireframe
+# Workflow Sidebar - Modern UI with Streamlit buttons (working click navigation)
 with st.sidebar:
-    st.header("Workflow Steps")
+    # Inject sidebar styling
+    st.markdown("""
+    <style>
+    .sidebar-nav-item {
+        position: relative;
+        margin-bottom: 4px;
+        cursor: pointer;
+    }
+    .sidebar-nav-display {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        padding: 10px 14px;
+        border-radius: 8px;
+        font-size: 14px;
+        font-weight: 500;
+        min-height: 40px;
+        background-color: #ffffff;
+        color: #333;
+        transition: all 0.2s ease;
+    }
+    .sidebar-nav-display:hover {
+        background-color: #f4f7ff;
+    }
+    .sidebar-nav-display.active {
+        background-color: #1f3c88;
+        color: white;
+    }
+    .sidebar-nav-display.active svg {
+        stroke: white;
+        color: white;
+    }
+    .sidebar-nav-icon {
+        flex-shrink: 0;
+        width: 20px;
+        height: 20px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+    }
+    .sidebar-nav-icon svg {
+        width: 20px;
+        height: 20px;
+        stroke: #333;
+        color: #333;
+        fill: none;
+    }
+    .sidebar-nav-display.active .sidebar-nav-icon svg {
+        stroke: white;
+        color: white;
+    }
+    .sidebar-nav-text {
+        flex: 1;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+    }
+    .sidebar-nav-item button {
+        position: absolute;
+        top: 0;
+        left: 0;
+        width: 100%;
+        height: 100%;
+        opacity: 0;
+        z-index: 1;
+        cursor: pointer;
+        margin: 0;
+        padding: 0;
+    }
+    </style>
+    """, unsafe_allow_html=True)
+    
+    st.markdown("""
+    <div class="sidebar-header">Workflow Steps</div>
+    """, unsafe_allow_html=True)
+    
     steps = [
-        "1 - Upload Layout Image",
-        "2 - Regenerated Image",
-        "3 - Detect Coordinates",
-        "4 - Preview Polygons",
-        "5 - Preview in Brochure",
-        "6 - Configure Map Settings",
-        "7 - Update Lat and Long",
-        "8 - Preview in Google Map"
+        ("1 - Upload Layout Image", '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="17 8 12 3 7 8"></polyline><line x1="12" y1="3" x2="12" y2="15"></line></svg>'),
+        ("2 - Regenerated Image", '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"></polyline><polyline points="1 20 1 14 7 14"></polyline><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path></svg>'),
+        ("3 - Detect Coordinates", '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><circle cx="12" cy="12" r="6"></circle><circle cx="12" cy="12" r="2"></circle></svg>'),
+        ("4 - Preview Polygons", '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="12 2 2 7 12 12 22 7 12 2"></polygon><polyline points="2 17 12 22 22 17"></polyline><polyline points="2 12 12 17 22 12"></polyline></svg>'),
+        ("5 - Preview in Brochure", '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline><line x1="16" y1="13" x2="8" y2="13"></line><line x1="16" y1="17" x2="8" y2="17"></line><polyline points="10 9 9 9 8 9"></polyline></svg>'),
+        ("6 - Configure Map Settings", '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"></circle><path d="M12 1v6m0 6v6M5.64 5.64l4.24 4.24m8.24 8.24l-4.24-4.24M1 12h6m6 0h6M5.64 18.36l4.24-4.24m8.24-8.24l-4.24 4.24"></path></svg>'),
+        ("7 - Update Lat and Long", '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"></path><circle cx="12" cy="10" r="3"></circle></svg>'),
+        ("8 - Preview in Google Map", '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="1 6 1 22 8 18 16 22 23 18 23 2 16 6 8 2 1 6"></polygon><line x1="8" y1="2" x2="8" y2="18"></line><line x1="16" y1="6" x2="16" y2="22"></line></svg>')
     ]
     
-    # Check if all steps are loaded (plots exist means step 1 is done)
-    steps_loaded = st.session_state.get('plots', []) != []
+    # Get current step
+    current_step = st.session_state.get("current_step", 1)
     
-    for i, step in enumerate(steps, 1):
-        if st.session_state.current_step == i:
-            st.markdown(f"<p style='color: #0066CC; font-weight: bold;'>{step}</p>", unsafe_allow_html=True)
-        else:
-            # Make steps clickable only after steps are loaded
-            if steps_loaded:
-                # Create clickable step link with styled button
-                step_key = f"nav_step_{i}"
-                if st.button(step, key=step_key, use_container_width=True, 
-                            help=f"Navigate to {step}"):
-                    st.session_state.current_step = i
-                    st.rerun()
-            else:
-                st.markdown(f"<p style='color: #666666;'>{step}</p>", unsafe_allow_html=True)
+    # Build all sidebar items HTML (no extra whitespace)
+    sidebar_items_html = ""
+    for i, (step_label, svg_icon) in enumerate(steps, 1):
+        is_active = current_step == i
+        active_class = "active" if is_active else ""
+        
+        sidebar_items_html += f'<div class="sidebar-nav-item" onclick="navigateToStep({i})"><div class="sidebar-nav-display {active_class}"><div class="sidebar-nav-icon">{svg_icon}</div><div class="sidebar-nav-text">{step_label}</div></div></div>'
     
-    st.divider()
-
-# Main content area
-st.title("🗺️ Geo Plot Mapper")
-
-# Global CSS for Previous buttons styling
-st.markdown("""
-    <style>
-        /* Style Previous buttons with gray background - target by key pattern and column position */
-        button[key*="prev_step"]:not([kind="primary"]) {
-            background-color: #6c757d !important;
-            color: white !important;
-            border: 1px solid #6c757d !important;
-            font-weight: 500 !important;
-        }
-        button[key*="prev_step"]:not([kind="primary"]):hover {
-            background-color: #5a6268 !important;
-            border-color: #5a6268 !important;
-        }
-        button[key*="prev_step"]:not([kind="primary"]):focus {
-            box-shadow: 0 0 0 0.2rem rgba(108, 117, 125, 0.5) !important;
-        }
-        /* Fallback: target buttons in second column of navigation */
-        div[data-testid="column"]:nth-child(2) button:not([kind="primary"]) {
-            background-color: #6c757d !important;
-            color: white !important;
-            border: 1px solid #6c757d !important;
-            font-weight: 500 !important;
-        }
-        div[data-testid="column"]:nth-child(2) button:not([kind="primary"]):hover {
-            background-color: #5a6268 !important;
-            border-color: #5a6268 !important;
-        }
-        div[data-testid="column"]:nth-child(2) button:not([kind="primary"]):focus {
-            box-shadow: 0 0 0 0.2rem rgba(108, 117, 125, 0.5) !important;
-        }
-    </style>
-""", unsafe_allow_html=True)
-
-# SIDEBAR: Only SQLite (removed coordinates - moved to main page)
-if st.session_state.plots:
-    with st.sidebar:
-        st.header("💾 Numbering Profiles")
-        with st.expander("SQLite Database", expanded=True):
-            st.write("Save or load numbering profiles from SQLite database.")
-            profile_name = st.text_input("Profile name", value="default", key="sidebar_profile_name")
-
-            def ensure_db():
-                conn = sqlite3.connect("plot_numbers.db")
-                conn.execute(
-                    """
-                    CREATE TABLE IF NOT EXISTS profiles (
-                        id INTEGER PRIMARY KEY AUTOINCREMENT,
-                        profile_name TEXT NOT NULL,
-                        plot_id TEXT NOT NULL,
-                        plot_number INTEGER,
-                        created_at TEXT NOT NULL
-                    )
-                    """
-                )
-                return conn
-
-            if st.button("💾 Save current numbering", key="sidebar_save"):
-                if not st.session_state.plots:
-                    st.error("No plots to save.")
-                else:
-                    conn = ensure_db()
-                    now = datetime.utcnow().isoformat()
-                    rows = [(profile_name, p.get('plot_id'), p.get('plot_number'), now) for p in st.session_state.plots]
-                    with conn:
-                        conn.executemany(
-                            "INSERT INTO profiles (profile_name, plot_id, plot_number, created_at) VALUES (?, ?, ?, ?)",
-                            rows
-                        )
-                    conn.close()
-                    st.success(f"Saved {len(rows)} entries to profile '{profile_name}'.")
-            
-            if st.button("📥 Load profile and apply", key="sidebar_load"):
-                conn = ensure_db()
-                cur = conn.cursor()
-                cur.execute(
-                    "SELECT plot_id, plot_number FROM profiles WHERE profile_name = ? ORDER BY id DESC",
-                    (profile_name,)
-                )
-                rows = cur.fetchall()
-                conn.close()
-                if not rows:
-                    st.warning(f"No saved data for profile '{profile_name}'.")
-                else:
-                    # Use most recent occurrence per plot_id
-                    seen = {}
-                    for plot_id, plot_number in rows:
-                        if plot_id not in seen:
-                            seen[plot_id] = plot_number
-                    applied = 0
-                    for p in st.session_state.plots:
-                        if p.get('plot_id') in seen:
-                            p['plot_number'] = seen[p['plot_id']]
-                            applied += 1
-                    st.session_state.geo_plots = []
-                    st.success(f"Applied {applied} plot numbers from profile '{profile_name}'.")
+    # Render all items in a single markdown block (compact HTML)
+    st.markdown(f'<div class="sidebar-nav-container">{sidebar_items_html}</div><script>function navigateToStep(step){{const url=new URL(window.location.href);url.searchParams.set("step",step);window.location.href=url.toString();}}</script>', unsafe_allow_html=True)
+    
+    # Handle navigation from query parameters
+    step_from_query = st.query_params.get("step", None)
+    if step_from_query:
+        try:
+            step_num = int(step_from_query)
+            if 1 <= step_num <= 8:
+                if st.session_state.get("current_step", 1) != step_num:
+                    st.session_state.current_step = step_num
+                    st.query_params.pop("step", None)
                     st.rerun()
-            
-            if st.button("📄 List profiles", key="sidebar_list"):
-                conn = ensure_db()
-                df = pd.read_sql_query(
-                    "SELECT profile_name, COUNT(*) as entries, MIN(created_at) as first_saved, MAX(created_at) as last_saved FROM profiles GROUP BY profile_name ORDER BY last_saved DESC",
-                    conn
-                )
-                conn.close()
-                if df.empty:
-                    st.info("No profiles saved yet.")
-                else:
-                    st.dataframe(df, use_container_width=True)
+        except (ValueError, TypeError):
+            pass
+    
+    # Database section removed from sidebar - now appears below Publish button in Step 8
+
+# Get current step for rendering
+current_step = st.session_state.get("current_step", 1)
+
+# Main content area - Title only shows on Step 1
+if current_step == 1:
+    # Add class to body for Step 1 specific styling
+    st.markdown("""
+    <script>
+        document.body.classList.add('step-1-active');
+    </script>
+    """, unsafe_allow_html=True)
+    # Styled header - centered perfectly
+    st.markdown("""
+    <div class="geo-header-container">
+        <div style="
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            width: 100%;
+            margin: 0 auto;
+            padding: 0;
+            text-align: center;
+        ">
+            <h1 style="
+                color: white;
+                font-weight: bold;
+                font-size: 2.8rem;
+                margin: 0 auto;
+                padding: 0;
+                text-shadow: 0 2px 4px rgba(0,0,0,0.3);
+                letter-spacing: 1px;
+                text-align: center;
+            ">Geo Plot Mapper</h1>
+        </div>
+    </div>
+    """, unsafe_allow_html=True)
+
+# CSS is now loaded from external file (styles.css) at the top of the script
+
+# ========================================
+# DATABASE MODAL HANDLER - Now in sidebar
+# ========================================
+# Database functionality has been moved to sidebar expander above
 
 # PAGE FLOW BASED ON CURRENT STEP
 # STEP 1: Upload Layout Image (only shows upload section, no tabs, no config)
-if st.session_state.current_step == 1:
-    st.header("1 - Upload Layout Image")
+if current_step == 1:
+    # Add spacing after header
+    st.markdown("<div style='height: 40px;'></div>", unsafe_allow_html=True)
     
-    uploaded_file = st.file_uploader("Upload plot layout", type=["jpg", "jpeg", "png"])
+    # Custom label for upload section
+    st.markdown("""
+    <div style="
+        color: #4a5568;
+        font-size: 16px;
+        font-weight: 600;
+        margin-bottom: 15px;
+        margin-left: 0;
+    "></div>
+    """, unsafe_allow_html=True)
+    
+    # Add wrapper div with class for easier targeting
+    st.markdown("""
+    <div class="custom-upload-wrapper">
+    """, unsafe_allow_html=True)
+    
+    uploaded_file = st.file_uploader("Upload Image", type=["jpg", "jpeg", "png"], label_visibility="hidden")
+    
+    st.markdown("</div>", unsafe_allow_html=True)
     
     if uploaded_file is not None:
         image_bytes = uploaded_file.getvalue()
@@ -1370,25 +1928,21 @@ if st.session_state.current_step == 1:
                 background_type = detect_background_type(image_bytes)
                 st.session_state.uploaded_image_background_type = background_type
                 st.session_state.uploaded_image_bytes = image_bytes  # Store for use in Step 5
+                # Store original uploaded image as base64 (before detection/regeneration)
+                # This will be used for background toggle in Step 2
+                nparr = np.frombuffer(image_bytes, np.uint8)
+                original_cv_image = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
+                if original_cv_image is not None:
+                    st.session_state.original_uploaded_image_base64 = ndarray_to_data_url(original_cv_image)
                 st.session_state.last_uploaded_file_name = uploaded_file.name
         
-        col1, col2 = st.columns([1.2, 1])
+        # Image Preview Expander - inline with file name
+        with st.expander(" Image Preview", expanded=False):
+            st.image(pil_image, caption="Uploaded Image", use_container_width=True)
         
-        with col1:
-            with st.expander("📷 Image Preview", expanded=False):
-                st.image(pil_image, caption="Uploaded Image", width='stretch')
-        
-        # with col2:
-        #     st.info("""
-        #     **Detection Method:**
-        #     - Finds plot boundaries
-        #     - Uses OCR for plot numbers
-        #     - Applies sequential numbering
-        #     - Handles irregular/angled plots
-        #     """)
-            
-            if st.button("🔍 Detect Plots", type="primary"):
-                with st.spinner("Analyzing... Please wait 30-60 seconds"):
+        # Detect Plots button
+        if st.button("Detect Plots", type="primary"):
+                with st.spinner("Analyzing... Please wait"):
                     plots, display_img, thresh, numbers = detect_plot_shapes_enhanced(image_bytes)
                     st.session_state.plots = plots
                     st.session_state.detection_image = display_img
@@ -1409,27 +1963,45 @@ if st.session_state.current_step == 1:
                     st.session_state.plot_statuses = updated_statuses
                     
                     if plots:
-                        st.success(f"🎉 Found {len(plots)} plots!")
+                        st.success(f"Detected {len(plots)} plots!")
                     else:
                         st.error("No plots detected")
         
         # Next button for Step 1 - goes to Step 2 (Regenerated Image)
         if uploaded_file is not None and st.session_state.plots:
             col_btn1, col_btn2 = st.columns([10, 1])
+            with col_btn1:
+                st.write("")  # Spacer
             with col_btn2:
-                if st.button("Next", type="primary", use_container_width=True, key="next_step1"):
+                if st.button("Next", type="primary", key="next_step1"):
                     st.session_state.current_step = 2  # Go to Step 2 (Regenerated Image)
                     st.rerun()
 
 # STEP 2: Regenerated Image (shows detection image with red lines and dots)
-elif st.session_state.current_step == 2:
-    st.header("2 - Regenerated Image")
-    
+elif current_step == 2:
     if st.session_state.detection_image is not None and st.session_state.plots:
+        # Initialize show_background_step2 if not already set
+        if 'show_background_step2' not in st.session_state:
+            st.session_state.show_background_step2 = True
+        
+        # Add heading for Step 2
+        # st.write("**Use the interactive canvas below to edit plot coordinates. Zoom, pan, and move dots as needed.**")
+        
         # Store original image as base64 for the editable viewer
         if st.session_state.original_image_base64 is None:
             # Convert detection image to base64
             st.session_state.original_image_base64 = ndarray_to_data_url(st.session_state.detection_image)
+        
+        # Add toggle switch for background image in a visible container
+        st.markdown("<div style='margin-top: 10px; margin-bottom: 15px;'>", unsafe_allow_html=True)
+        show_background = st.toggle(
+            "Show Background",
+            value=st.session_state.get('show_background_step2', True),
+            key="toggle_background_step2",
+            help="Toggle to show/hide the original background image. When off, only plot lines and dots are visible."
+        )
+        st.session_state.show_background_step2 = show_background
+        st.markdown("</div>", unsafe_allow_html=True)
         
         # Create tabs for "Plot with lines" first, then "Plot with points"
         tab1, tab2 = st.tabs(["Plot with Lines", "Plot with Points"])
@@ -1454,41 +2026,333 @@ elif st.session_state.current_step == 2:
         
         plots_for_viewer = prepare_plots_for_viewer()
         
+        # Get image dimensions for blank image creation
+        height, width = st.session_state.detection_image.shape[:2]
+        
+        # Prepare background image URL based on toggle state
+        # Use original uploaded image if available, otherwise fall back to original_image_base64
+        original_bg_image = st.session_state.get('original_uploaded_image_base64') or st.session_state.original_image_base64
+        
+        if st.session_state.get('show_background_step2', True):
+            background_url = original_bg_image
+        else:
+            # Create a blank white image with plot lines and points visible
+            blank_image = np.ones((height, width, 3), dtype=np.uint8) * 255
+            
+            # Draw all plot boundaries and points on the blank image
+            for plot in st.session_state.plots:
+                corners = plot.get('corners', {})
+                if not corners or len(corners) < 4:
+                    continue
+                
+                # Draw polygon lines
+                pts = np.array([
+                    [corners['A']['x'], corners['A']['y']],
+                    [corners['B']['x'], corners['B']['y']],
+                    [corners['C']['x'], corners['C']['y']],
+                    [corners['D']['x'], corners['D']['y']]
+                ], np.int32)
+                
+                # Draw red lines
+                cv2.polylines(blank_image, [pts], True, (0, 0, 255), 2)
+                
+                # Draw red dots at corners
+                cv2.circle(blank_image, (corners['A']['x'], corners['A']['y']), 5, (0, 0, 255), -1)
+                cv2.circle(blank_image, (corners['B']['x'], corners['B']['y']), 5, (0, 0, 255), -1)
+                cv2.circle(blank_image, (corners['C']['x'], corners['C']['y']), 5, (0, 0, 255), -1)
+                cv2.circle(blank_image, (corners['D']['x'], corners['D']['y']), 5, (0, 0, 255), -1)
+                
+                # Draw plot number in the center
+                plot_number = plot.get('plot_number')
+                if plot_number is not None:
+                    cx = sum([corners[c]['x'] for c in corners]) // 4
+                    cy = sum([corners[c]['y'] for c in corners]) // 4
+                    cv2.putText(blank_image, str(plot_number),
+                               (cx-10, cy+5), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 0), 2)
+            
+            background_url = ndarray_to_data_url(blank_image)
+        
         with tab1:
-            st.subheader("Plot with Lines")
-            st.write("**Edit the red dots to adjust plot boundaries. Lines will update automatically.**")
-            if editable_plot_viewer and st.session_state.original_image_base64:
+            if editable_plot_viewer and background_url:
                 editable_plot_viewer(
-                    background_image_url=st.session_state.original_image_base64,
+                    background_image_url=background_url,
                     plots=plots_for_viewer,
                     mode="lines"
                 )
             else:
                 st.warning("⚠️ Editable viewer not available. Showing static image.")
-                st.image(st.session_state.detection_image, channels="BGR",
-                        caption=f"{len(st.session_state.plots)} plots detected with red lines and dots",
-                        use_container_width=True)
+                if st.session_state.get('show_background_step2', True):
+                    st.image(st.session_state.detection_image, channels="BGR",
+                            caption=f"{len(st.session_state.plots)} plots detected with red lines and dots",
+                            use_container_width=True)
+                else:
+                    # Show blank image with plot overlays
+                    blank_display = np.ones((height, width, 3), dtype=np.uint8) * 255
+                    
+                    # Draw plots on blank image
+                    for plot in st.session_state.plots:
+                        corners = plot.get('corners', {})
+                        if not corners or len(corners) < 4:
+                            continue
+                        
+                        pts = np.array([
+                            [corners['A']['x'], corners['A']['y']],
+                            [corners['B']['x'], corners['B']['y']],
+                            [corners['C']['x'], corners['C']['y']],
+                            [corners['D']['x'], corners['D']['y']]
+                        ], np.int32)
+                        
+                        cv2.polylines(blank_display, [pts], True, (0, 0, 255), 2)
+                        cv2.circle(blank_display, (corners['A']['x'], corners['A']['y']), 5, (0, 0, 255), -1)
+                        cv2.circle(blank_display, (corners['B']['x'], corners['B']['y']), 5, (0, 0, 255), -1)
+                        cv2.circle(blank_display, (corners['C']['x'], corners['C']['y']), 5, (0, 0, 255), -1)
+                        cv2.circle(blank_display, (corners['D']['x'], corners['D']['y']), 5, (0, 0, 255), -1)
+                        
+                        plot_number = plot.get('plot_number')
+                        if plot_number is not None:
+                            cx = sum([corners[c]['x'] for c in corners]) // 4
+                            cy = sum([corners[c]['y'] for c in corners]) // 4
+                            cv2.putText(blank_display, str(plot_number),
+                                       (cx-10, cy+5), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 0), 2)
+                    
+                    st.image(blank_display, channels="RGB",
+                            caption=f"{len(st.session_state.plots)} plots (no background)",
+                            use_container_width=True)
         
         with tab2:
-            st.subheader("Plot with Points (Red Dots)")
-            st.write("**Edit the red dots by dragging them to correct positions.**")
-            if editable_plot_viewer and st.session_state.original_image_base64:
+            if editable_plot_viewer and background_url:
                 editable_plot_viewer(
-                    background_image_url=st.session_state.original_image_base64,
+                    background_image_url=background_url,
                     plots=plots_for_viewer,
                     mode="points"
                 )
             else:
                 st.warning("⚠️ Editable viewer not available. Showing static image.")
-                st.image(st.session_state.detection_image, channels="BGR",
-                        caption=f"{len(st.session_state.plots)} plots detected with red lines and dots",
-                        use_container_width=True)
+                if st.session_state.get('show_background_step2', True):
+                    st.image(st.session_state.detection_image, channels="BGR",
+                            caption=f"{len(st.session_state.plots)} plots detected with red lines and dots",
+                            use_container_width=True)
+                else:
+                    # Show blank image with plot overlays
+                    blank_display = np.ones((height, width, 3), dtype=np.uint8) * 255
+                    
+                    # Draw plots on blank image (points mode)
+                    for plot in st.session_state.plots:
+                        corners = plot.get('corners', {})
+                        if not corners or len(corners) < 4:
+                            continue
+                        
+                        # Draw only red dots at corners (no lines)
+                        cv2.circle(blank_display, (corners['A']['x'], corners['A']['y']), 5, (0, 0, 255), -1)
+                        cv2.circle(blank_display, (corners['B']['x'], corners['B']['y']), 5, (0, 0, 255), -1)
+                        cv2.circle(blank_display, (corners['C']['x'], corners['C']['y']), 5, (0, 0, 255), -1)
+                        cv2.circle(blank_display, (corners['D']['x'], corners['D']['y']), 5, (0, 0, 255), -1)
+                        
+                        plot_number = plot.get('plot_number')
+                        if plot_number is not None:
+                            cx = sum([corners[c]['x'] for c in corners]) // 4
+                            cy = sum([corners[c]['y'] for c in corners]) // 4
+                            cv2.putText(blank_display, str(plot_number),
+                                       (cx-10, cy+5), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 0), 2)
+                    
+                    st.image(blank_display, channels="RGB",
+                            caption=f"{len(st.session_state.plots)} plots (no background)",
+                            use_container_width=True)
         
         # Button to apply changes from the editable viewer
         st.divider()
         
         # Show instruction
         st.info("💡 **How to use:** Edit plots in the viewer above, then click 'Save Changes'. The yellow box will appear with coordinates - copy and paste them below.")
+        
+        # Renumber Plot Section
+        with st.expander("Renumber Plots", expanded=False):
+            st.write("**Sequential Renumbering with Snake Pattern:**")
+            st.write("1. Select the plot that should be **Plot 1**")
+            st.write("2. Choose numbering mode (Row-wise or Column-wise)")
+            st.write("3. Choose the starting direction")
+            st.write("4. All plots will be renumbered in a snake/zigzag pattern")
+            
+            st.info("💡 **Tip:** Uses snake pattern (alternating directions) for efficient numbering!\n\n" + 
+                   "• **Row-wise:** Numbers across row, then alternates direction each row\n\n" +
+                   "• **Column-wise:** Numbers down/up column, then alternates direction each column")
+            
+            if st.session_state.plots:
+                # Get list of plots for selection
+                plot_options = {f"{p.get('plot_id', 'Unknown')} (Current: Plot {p.get('plot_number', 'N/A')})": p.get('plot_id') 
+                               for p in st.session_state.plots}
+                plot_options_list = list(plot_options.keys())
+                
+                col_renumber1, col_renumber2, col_renumber3 = st.columns(3)
+                
+                with col_renumber1:
+                    selected_plot_display = st.selectbox(
+                        "📍 Select Plot 1:",
+                        options=plot_options_list,
+                        key="renumber_plot_select",
+                        help="Choose which plot should be numbered as Plot 1"
+                    )
+                    selected_plot_id = plot_options.get(selected_plot_display)
+                
+                with col_renumber2:
+                    numbering_mode = st.radio(
+                        "🔄 Numbering Mode:",
+                        options=['row', 'column'],
+                        format_func=lambda x: '📊 Row-wise (→)' if x == 'row' else '📋 Column-wise (↓)',
+                        key="renumber_mode",
+                        help="Row-wise: number across rows, then move to next row\nColumn-wise: number down columns, then move to next column"
+                    )
+                
+                with col_renumber3:
+                    if numbering_mode == 'row':
+                        direction = st.radio(
+                            "🔄 Starting Direction:",
+                            options=['left', 'right'],
+                            format_func=lambda x: '▶️ Left To Right' if x == 'left' else '◀️ Right To Left',
+                            key="renumber_direction",
+                            help="LTR: First row Left→Right, second row Right→Left (snake pattern)\nRTL: First row Right→Left, second row Left→Right"
+                        )
+                    else:
+                        direction = st.radio(
+                            "🔄 Starting Direction:",
+                            options=['left', 'right'],
+                            format_func=lambda x: '⬇️ Top to Bottom ↑↓' if x == 'left' else '⬆️ Bottom to Top ↓↑',
+                            key="renumber_direction",
+                            help="Top to Bottom: First column goes DOWN, next goes UP, then DOWN, UP...\nBottom to Top: First column goes UP, next goes DOWN, then UP, DOWN..."
+                        )
+                
+                # Optional: Manual Plot 2 selection
+                st.divider()
+                with st.expander("🎯 Advanced: Manual Plot #2 Selection (Optional)", expanded=False):
+                    st.markdown("""
+                    **When to use:** Plot 1 spans multiple columns/rows with multiple plots below/beside it
+                    
+                    **Examples:**
+                    - Plot 1 is wider and has 2+ plots directly below it
+                    - Plot 1 covers multiple sub-columns
+                    - You want to control which plot becomes Plot 2
+                    
+                    **Workflow:** ✓ Select Plot 1 above → ✓ Enable this → ✓ Select Plot 2 → Click Renumber
+                    """)
+                    
+                    enable_manual_plot2 = st.checkbox(
+                        "✓ Enable manual Plot #2 selection",
+                        value=False,
+                        key="enable_manual_plot2",
+                        help="Check this BEFORE renumbering if Plot 1 spans multiple plots below/beside it"
+                    )
+                    
+                    second_plot_id = None
+                    if enable_manual_plot2:
+                        st.success("👍 Great! Now select which plot should be Plot #2:")
+                        # Filter out Plot 1 from options
+                        plot_options_for_plot2 = {k: v for k, v in plot_options.items() if v != selected_plot_id}
+                        plot_options_list_plot2 = list(plot_options_for_plot2.keys())
+                        
+                        if plot_options_list_plot2:
+                            selected_plot2_display = st.selectbox(
+                                "📍 Select Plot #2:",
+                                options=plot_options_list_plot2,
+                                key="renumber_plot2_select",
+                                help="Choose the plot that should be numbered as Plot 2. Works for both row-wise and column-wise modes!"
+                            )
+                            second_plot_id = plot_options_for_plot2.get(selected_plot2_display)
+                            
+                            st.info(f"✅ Ready to renumber: {selected_plot_id} → Plot 1, {second_plot_id} → Plot 2")
+                        else:
+                            st.warning("No other plots available.")
+                
+                if st.button("✅ Renumber All Plots", type="primary", key="btn_renumber_plots"):
+                    if selected_plot_id:
+                        # Store original numbers for potential rollback
+                        original_numbers = {p.get('plot_id'): p.get('plot_number') for p in st.session_state.plots}
+                        
+                        # Apply renumbering
+                        st.session_state.plots = renumber_plots_sequentially(
+                            st.session_state.plots.copy(),
+                            selected_plot_id,
+                            direction,
+                            numbering_mode,
+                            second_plot_id
+                        )
+                        
+                        # Update geo_plots with new plot numbers (match by plot_id)
+                        if st.session_state.geo_plots:
+                            # Create a mapping of plot_id to new plot_number
+                            plot_id_to_number = {p.get('plot_id'): p.get('plot_number') for p in st.session_state.plots}
+                            
+                            # Update geo_plots
+                            for geo_plot in st.session_state.geo_plots:
+                                plot_id = geo_plot.get('plot_id')
+                                if plot_id in plot_id_to_number:
+                                    geo_plot['plot_number'] = plot_id_to_number[plot_id]
+                            
+                            print(f"✅ Updated {len(st.session_state.geo_plots)} geo_plots with new plot numbers")
+                        
+                        # Regenerate image with new numbers
+                        if st.session_state.detection_image is not None:
+                            original_img = st.session_state.detection_image.copy()
+                            if len(original_img.shape) == 3:
+                                height, width = original_img.shape[:2]
+                                display_img = np.ones((height, width, 3), dtype=np.uint8) * 255
+                            else:
+                                height, width = original_img.shape
+                                display_img = np.ones((height, width, 3), dtype=np.uint8) * 255
+                            
+                            for plot in st.session_state.plots:
+                                corners = plot.get('corners', {})
+                                if not corners:
+                                    continue
+                                pts = np.array([
+                                    [corners['A']['x'], corners['A']['y']],
+                                    [corners['B']['x'], corners['B']['y']],
+                                    [corners['C']['x'], corners['C']['y']],
+                                    [corners['D']['x'], corners['D']['y']]
+                                ], np.int32)
+                                cv2.polylines(display_img, [pts], True, (0, 0, 255), 2)
+                                cv2.circle(display_img, (corners['A']['x'], corners['A']['y']), 4, (0, 0, 255), -1)
+                                cv2.circle(display_img, (corners['B']['x'], corners['B']['y']), 4, (0, 0, 255), -1)
+                                cv2.circle(display_img, (corners['C']['x'], corners['C']['y']), 4, (0, 0, 255), -1)
+                                cv2.circle(display_img, (corners['D']['x'], corners['D']['y']), 4, (0, 0, 255), -1)
+                                
+                                plot_number = plot.get('plot_number')
+                                if plot_number is not None:
+                                    cx = sum([corners[c]['x'] for c in corners]) // 4
+                                    cy = sum([corners[c]['y'] for c in corners]) // 4
+                                    cv2.putText(display_img, str(plot_number),
+                                               (cx-10, cy+5), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 0), 2)
+                            
+                            st.session_state.detection_image = display_img
+                            st.session_state.detected_overlay_url = ndarray_to_data_url(display_img)
+                            # Don't overwrite original_image_base64 - preserve for background toggle
+                            if st.session_state.original_image_base64 is None:
+                                st.session_state.original_image_base64 = ndarray_to_data_url(display_img)
+                            st.session_state.brochure_overlay_url = st.session_state.detected_overlay_url
+                        
+                        # Success message
+                        mode_text = "row-wise" if numbering_mode == 'row' else "column-wise"
+                        if numbering_mode == 'row':
+                            direction_text = "LTR→RTL→LTR (snake)" if direction == 'left' else "RTL→LTR→RTL (snake)"
+                        else:
+                            direction_text = "Top→Bottom→Top (↓↑↓)" if direction == 'left' else "Bottom→Top→Bottom (↑↓↑)"
+                        
+                        success_msg = f"✅ Successfully renumbered {len(st.session_state.plots)} plots!"
+                        success_msg += f"\n\n🎯 **Starting Plot:** {selected_plot_id} → Plot 1"
+                        if second_plot_id:
+                            success_msg += f"\n🎯 **Plot #2:** {second_plot_id} → Plot 2 (manually selected)"
+                        success_msg += f"\n📊 **Mode:** {mode_text.title()} - {direction_text}"
+                        success_msg += f"\n🔢 **Pattern:** Snake pattern with synchronized plot IDs"
+                        if st.session_state.geo_plots:
+                            success_msg += f"\n\n📍 **Updated in:**\n- ✅ Step 2 (Regenerated Image)\n- ✅ Step 5 (Brochure Preview)\n- ✅ Step 8 (Google Map Preview)"
+                        else:
+                            success_msg += f"\n\n📍 **Updated in:**\n- ✅ Step 2 (Regenerated Image)\n- ✅ Step 5 (Brochure Preview)\n- ℹ️ Step 8 (Map Preview) - will update when you generate the map"
+                        
+                        st.success(success_msg)
+                        st.rerun()
+                    else:
+                        st.error("Please select a plot to be Plot 1.")
+            else:
+                st.warning("No plots available for renumbering.")
         
         col_apply, col_detect = st.columns(2)
         with col_apply:
@@ -1497,7 +2361,7 @@ elif st.session_state.current_step == 2:
                                      placeholder='Click "Save Changes" in the viewer above, then copy the JSON from the yellow box and paste it here.',
                                      help="After editing plots, click 'Save Changes' to get the JSON coordinates")
             
-            if st.button("✅ Apply Coordinates", type="primary", use_container_width=True):
+            if st.button("Save Changes", type="primary", use_container_width=True):
                 if coord_json and coord_json.strip():
                     try:
                         import json
@@ -1513,17 +2377,64 @@ elif st.session_state.current_step == 2:
                             # Create a mapping of plot IDs from the saved data
                             plot_dict = {p['id']: p for p in plots_data}
                             updated_plot_ids = set(plot_dict.keys())
+                            
+                            # Create a mapping of plots by their corners (for matching after renumbering)
+                            # This helps match plots even if plot_id changed
+                            def get_corner_key(corners):
+                                """Create a unique key from plot corners for matching"""
+                                if not corners:
+                                    return None
+                                corner_list = []
+                                for label in ['A', 'B', 'C', 'D']:
+                                    if label in corners:
+                                        corner_list.append((corners[label].get('x', 0), corners[label].get('y', 0)))
+                                return tuple(sorted(corner_list)) if corner_list else None
+                            
+                            # Build corner mapping from saved data
+                            saved_corner_map = {}
+                            for plot_data in plots_data:
+                                points = plot_data.get('points', [])
+                                if len(points) >= 3:
+                                    corners = {}
+                                    for i, label in enumerate(['A', 'B', 'C', 'D']):
+                                        if i < len(points):
+                                            corners[label] = {'x': int(points[i]['x']), 'y': int(points[i]['y'])}
+                                        else:
+                                            last_point = points[-1]
+                                            corners[label] = {'x': int(last_point['x']), 'y': int(last_point['y'])}
+                                    corner_key = get_corner_key(corners)
+                                    if corner_key:
+                                        saved_corner_map[corner_key] = plot_data
+                            
                             existing_plot_ids = {p.get('plot_id') for p in st.session_state.plots}
                             
                             updated_count = 0
                             added_count = 0
                             deleted_count = 0
                             
-                            # Update existing plots
+                            # Track which plots were matched (by ID or by corners)
+                            matched_plot_ids = set()
+                            
+                            # Update existing plots - try to match by ID first, then by corners
                             for plot in st.session_state.plots[:]:  # Use slice to allow modification
                                 plot_id = plot.get('plot_id')
+                                matched = False
+                                
+                                # Try matching by plot_id first
                                 if plot_id in plot_dict:
                                     updated_plot = plot_dict[plot_id]
+                                    matched_plot_ids.add(plot_id)
+                                    matched = True
+                                else:
+                                    # Try matching by corners (in case plot_id changed during renumbering)
+                                    plot_corners = plot.get('corners', {})
+                                    corner_key = get_corner_key(plot_corners)
+                                    if corner_key and corner_key in saved_corner_map:
+                                        updated_plot = saved_corner_map[corner_key]
+                                        matched_plot_ids.add(updated_plot.get('id'))
+                                        matched = True
+                                
+                                if matched:
                                     points = updated_plot.get('points', [])
                                     
                                     if len(points) >= 3:  # Allow 3+ points for any shape
@@ -1539,17 +2450,43 @@ elif st.session_state.current_step == 2:
                                                 last_point = points[-1]
                                                 corners[label] = {'x': int(last_point['x']), 'y': int(last_point['y'])}
                                         plot['corners'] = corners
+                                        
+                                        # CRITICAL: Also update plot_number and plot_id if provided in saved data
+                                        # This ensures renumbered plots are correctly reflected
+                                        if 'plot_number' in updated_plot:
+                                            new_plot_number = updated_plot.get('plot_number')
+                                            if new_plot_number is not None:
+                                                plot['plot_number'] = int(new_plot_number)
+                                        
+                                        # Update plot_id if it changed (e.g., after renumbering)
+                                        new_plot_id = updated_plot.get('id')
+                                        if new_plot_id and new_plot_id != plot_id:
+                                            # Update plot_id in the plot
+                                            plot['plot_id'] = new_plot_id
+                                            # Also update in plot_statuses if it exists
+                                            if plot_id in st.session_state.plot_statuses:
+                                                status = st.session_state.plot_statuses[plot_id]
+                                                st.session_state.plot_statuses[new_plot_id] = status
+                                                del st.session_state.plot_statuses[plot_id]
+                                        
                                         updated_count += 1
                             
                             # Remove deleted plots (plots that exist in session but not in saved data)
-                            plots_to_remove = existing_plot_ids - updated_plot_ids
+                            # Use matched_plot_ids which includes both original IDs and new IDs after renumbering
+                            plots_to_remove = existing_plot_ids - matched_plot_ids
                             if plots_to_remove:
+                                # Also remove from plot_statuses
+                                for removed_id in plots_to_remove:
+                                    if removed_id in st.session_state.plot_statuses:
+                                        del st.session_state.plot_statuses[removed_id]
+                                
                                 st.session_state.plots = [p for p in st.session_state.plots 
                                                          if p.get('plot_id') not in plots_to_remove]
                                 deleted_count = len(plots_to_remove)
+                                print(f"🗑️ Removed {deleted_count} deleted plot(s): {list(plots_to_remove)}")
                             
-                            # Add new plots (plots that exist in saved data but not in session)
-                            plots_to_add = updated_plot_ids - existing_plot_ids
+                            # Add new plots (plots that exist in saved data but not matched to existing plots)
+                            plots_to_add = updated_plot_ids - matched_plot_ids
                             for plot_id in plots_to_add:
                                 new_plot_data = plot_dict[plot_id]
                                 points = new_plot_data.get('points', [])
@@ -1587,12 +2524,23 @@ elif st.session_state.current_step == 2:
                                         corners = plot.get('corners', {})
                                         if not corners:
                                             continue
-                                        pts = np.array([
-                                            [corners['A']['x'], corners['A']['y']],
-                                            [corners['B']['x'], corners['B']['y']],
-                                            [corners['C']['x'], corners['C']['y']],
-                                            [corners['D']['x'], corners['D']['y']]
-                                        ], np.int32)
+                                        
+                                        # Validate that all corners exist and have valid coordinates
+                                        required_corners = ['A', 'B', 'C', 'D']
+                                        if not all(corner in corners for corner in required_corners):
+                                            continue
+                                        
+                                        # Validate coordinates are numbers
+                                        try:
+                                            pts = np.array([
+                                                [int(corners['A']['x']), int(corners['A']['y'])],
+                                                [int(corners['B']['x']), int(corners['B']['y'])],
+                                                [int(corners['C']['x']), int(corners['C']['y'])],
+                                                [int(corners['D']['x']), int(corners['D']['y'])]
+                                            ], np.int32)
+                                        except (KeyError, ValueError, TypeError):
+                                            # Skip plots with invalid coordinates
+                                            continue
                                         cv2.polylines(display_img, [pts], True, (0, 0, 255), 2)
                                         cv2.circle(display_img, (corners['A']['x'], corners['A']['y']), 4, (0, 0, 255), -1)
                                         cv2.circle(display_img, (corners['B']['x'], corners['B']['y']), 4, (0, 0, 255), -1)
@@ -1608,7 +2556,10 @@ elif st.session_state.current_step == 2:
                                     
                                     st.session_state.detection_image = display_img
                                     st.session_state.detected_overlay_url = ndarray_to_data_url(display_img)
-                                    st.session_state.original_image_base64 = ndarray_to_data_url(display_img)
+                                    # Don't overwrite original_image_base64 - keep it for background toggle
+                                    # Only update if it was never set
+                                    if st.session_state.original_image_base64 is None:
+                                        st.session_state.original_image_base64 = ndarray_to_data_url(display_img)
                                     st.session_state.brochure_overlay_url = st.session_state.detected_overlay_url
                                 
                                 # Create success message with all changes
@@ -1636,7 +2587,7 @@ elif st.session_state.current_step == 2:
                     st.warning("⚠️ Please paste the coordinates JSON first. Click 'Save Changes' in the viewer to get it.")
         
         with col_detect:
-            if st.button("🔍 Detect Coordinates Using AI", use_container_width=True, 
+            if st.button("Detect Coordinates", type="primary", key="detect_coords", use_container_width=True,
                         help="Click to mark coordinates as ready and proceed to next step"):
                 st.session_state.coordinates_detected = True
                 st.success("✅ Coordinates marked as ready! You can proceed to the next step.")
@@ -1646,13 +2597,13 @@ elif st.session_state.current_step == 2:
             st.success("✅ Coordinates ready! You can proceed to the next step.")
         
         # Navigation buttons for Step 2
-        col_btn1, col_btn2, col_btn3 = st.columns([6, 2, 2])
+        col_btn1, col_btn2, col_btn3 = st.columns([8, 1, 1])
         with col_btn2:
-            if st.button("Previous", use_container_width=True, key="prev_step2"):
+            if st.button("Previous", type="primary", key="prev_step2"):
                 st.session_state.current_step = 1  # Go back to Step 1
                 st.rerun()
         with col_btn3:
-            if st.button("Next", type="primary", use_container_width=True, key="next_step2"):
+            if st.button("Next", type="primary", key="next_step2"):
                 if st.session_state.get('coordinates_detected', False):
                     # If edits were made, try to apply them
                     if st.session_state.get('edits_made_in_step2', False):
@@ -1668,11 +2619,9 @@ elif st.session_state.current_step == 2:
         st.info("Please upload and detect plots first in Step 1.")
 
 # STEP 3: Detect Coordinates (shows editable grid table)
-elif st.session_state.current_step == 3:
-    st.header("3 - Detected Coordinates")
-
+elif current_step == 3:
     if st.session_state.plots:
-        st.subheader("✏️ Edit Plot Numbers & Coordinates")
+        st.subheader("Edit Plot Numbers & Coordinates")
         st.write("**Note:** Editable Data Grid with Runtime Save option")
         st.write("Use the table below to correct plot numbers and corner coordinates (A, B, C, D). All columns except Plot ID are editable.")
         
@@ -1740,7 +2689,7 @@ elif st.session_state.current_step == 3:
         
         col_apply, col_reset = st.columns([1, 1])
         with col_apply:
-            if st.button("✅ Apply Changes", type="primary"):
+            if st.button("Save Changes", type="primary"):
                 # Apply edited numbers and coordinates back to session_state.plots
                 plot_updates = {}
                 for _, row in edited_df_processed.iterrows():
@@ -1816,32 +2765,34 @@ elif st.session_state.current_step == 3:
                     
                     st.session_state.detection_image = display_img
                     st.session_state.detected_overlay_url = ndarray_to_data_url(display_img)
-                    st.session_state.original_image_base64 = ndarray_to_data_url(display_img)
+                    # Don't overwrite original_image_base64 - preserve for background toggle
+                    if st.session_state.original_image_base64 is None:
+                        st.session_state.original_image_base64 = ndarray_to_data_url(display_img)
                 
                 # Reset geo_plots so user regenerates with consistent numbers
                 st.session_state.geo_plots = []
                 st.success("✅ Applied changes. The image will be updated in Step 4.")
                 st.rerun()
         with col_reset:
-            if st.button("↩️ Revert Edits (reload from detection)"):
+            if st.button("Revert Changes", type="primary"):
                 st.info("Reverted UI edits. The table reflects current values from detection.")
                 st.rerun()
         
         # Navigation buttons for Step 3
-        col_btn1, col_btn2, col_btn3 = st.columns([6, 2, 2])
+        col_btn1, col_btn2, col_btn3 = st.columns([8, 1, 1])
         with col_btn2:
-            if st.button("Previous", use_container_width=True, key="prev_step3"):
+            if st.button("Previous", type="primary", key="prev_step3"):
                 st.session_state.current_step = 2  # Go back to Step 2
                 st.rerun()
         with col_btn3:
-            if st.button("Next", type="primary", use_container_width=True, key="next_step3"):
+            if st.button("Next", type="primary", key="next_step3"):
                 st.session_state.current_step = 4  # Go to Step 4 (Preview Polygons)
                 st.rerun()
     else:
         st.info("Please upload an image and detect plots first.")
 
 # STEP 4.5: Edit Coordinates (editable grid page)
-elif st.session_state.current_step == 4.5:
+elif current_step == 4.5:
     st.header("4.5 - Edit Coordinates")
 
     if st.session_state.plots:
@@ -1905,7 +2856,7 @@ elif st.session_state.current_step == 4.5:
                     return ['background-color: #ffcccc'] * len(row)  # Light red background
                 return [''] * len(row)
             
-            with st.expander("🔍 View duplicates highlighted in red", expanded=True):
+            with st.expander("View duplicates highlighted in red", expanded=True):
                 st.markdown("*Rows with duplicate plot numbers are highlighted in red:*")
                 st.dataframe(edited_df_processed.style.apply(highlight_duplicates, axis=1), use_container_width=True)
         else:
@@ -1913,7 +2864,7 @@ elif st.session_state.current_step == 4.5:
         
         col_apply, col_reset = st.columns([1, 1])
         with col_apply:
-            if st.button("✅ Apply Changes", type="primary"):
+            if st.button("Save Changes", type="primary"):
                 # Apply edited numbers and coordinates back to session_state.plots
                 plot_updates = {}
                 for _, row in edited_df_processed.iterrows():
@@ -1968,16 +2919,28 @@ elif st.session_state.current_step == 4.5:
                         display_img = np.ones((height, width, 3), dtype=np.uint8) * 255
                     
                     # Redraw all plots with updated coordinates
+                    # Only draw plots that have valid corners
                     for plot in st.session_state.plots:
                         corners = plot.get('corners', {})
                         if not corners:
                             continue
-                        pts = np.array([
-                            [corners['A']['x'], corners['A']['y']],
-                            [corners['B']['x'], corners['B']['y']],
-                            [corners['C']['x'], corners['C']['y']],
-                            [corners['D']['x'], corners['D']['y']]
-                        ], np.int32)
+                        
+                        # Validate that all corners exist and have valid coordinates
+                        required_corners = ['A', 'B', 'C', 'D']
+                        if not all(corner in corners for corner in required_corners):
+                            continue
+                        
+                        # Validate coordinates are numbers
+                        try:
+                            pts = np.array([
+                                [int(corners['A']['x']), int(corners['A']['y'])],
+                                [int(corners['B']['x']), int(corners['B']['y'])],
+                                [int(corners['C']['x']), int(corners['C']['y'])],
+                                [int(corners['D']['x']), int(corners['D']['y'])]
+                            ], np.int32)
+                        except (KeyError, ValueError, TypeError):
+                            # Skip plots with invalid coordinates
+                            continue
                         # Red lines for plot boundaries
                         cv2.polylines(display_img, [pts], True, (0, 0, 255), 2)
                         
@@ -1997,7 +2960,9 @@ elif st.session_state.current_step == 4.5:
                     
                     st.session_state.detection_image = display_img
                     st.session_state.detected_overlay_url = ndarray_to_data_url(display_img)
-                    st.session_state.original_image_base64 = ndarray_to_data_url(display_img)
+                    # Don't overwrite original_image_base64 - preserve for background toggle
+                    if st.session_state.original_image_base64 is None:
+                        st.session_state.original_image_base64 = ndarray_to_data_url(display_img)
                     st.session_state.brochure_overlay_url = st.session_state.detected_overlay_url
                 
                 # Reset geo_plots so user regenerates with consistent numbers
@@ -2005,27 +2970,25 @@ elif st.session_state.current_step == 4.5:
                 st.success("✅ Applied changes. The image has been regenerated and will be visible in Step 4.")
                 st.rerun()
         with col_reset:
-            if st.button("↩️ Revert Edits (reload from detection)"):
+            if st.button("Revert Changes", type="primary"):
                 st.info("Reverted UI edits. The table reflects current values from detection.")
                 st.rerun()
         
         # Navigation buttons for Step 4.5
-        col_btn1, col_btn2, col_btn3 = st.columns([6, 2, 2])
+        col_btn1, col_btn2, col_btn3 = st.columns([8, 1, 1])
         with col_btn2:
-            if st.button("Previous", use_container_width=True, key="prev_step4_5"):
+            if st.button("Previous", type="primary", key="prev_step4_5"):
                 st.session_state.current_step = 4  # Go back to Step 4
                 st.rerun()
         with col_btn3:
-            if st.button("Next", type="primary", use_container_width=True, key="next_step4_5"):
+            if st.button("Next", type="primary", key="next_step4_5"):
                 st.session_state.current_step = 5  # Go to Step 5 (Preview in Brochure)
                 st.rerun()
     else:
         st.info("Please detect plots first.")
 
 # STEP 5: Preview in Brochure
-elif st.session_state.current_step == 5:
-    st.header("5 - Preview in Brochure")
-    
+elif current_step == 5:
     if st.session_state.plots:
         st.write("**Interactive brochure preview with plot status controls:**")
 
@@ -2035,79 +2998,31 @@ elif st.session_state.current_step == 5:
             if plot_id and plot_id not in st.session_state.plot_statuses:
                 st.session_state.plot_statuses[plot_id] = random.choice(PLOT_STATUS_OPTIONS)
         
-        # Determine which background to use based on detection in Step 1
+        # Always use uploaded image as background (no default background)
         background_image_url = ""
-        background_type = st.session_state.get('uploaded_image_background_type', 'white')
+        uploaded_image_bytes = st.session_state.get('uploaded_image_bytes')
         
-        if background_type == 'white':
-            # Use default brochure background
-            script_dir = os.path.dirname(os.path.abspath(__file__))
-            project_root = os.path.dirname(script_dir)
-            background_image_path = os.path.join(project_root, "assets", "brochure_bg.png")
-            
-            if os.path.exists(background_image_path):
-                try:
-                    bg_image = Image.open(background_image_path).convert("RGB")
-                    background_image_url = pil_image_to_base64(bg_image)
-                    # st.info("📄 Using default brochure background (white background detected in uploaded image).")
-                except Exception as e:
-                    st.error(f"Failed to load background image: {e}")
-            else:
-                st.warning(f"Background image not found at: {background_image_path}")
+        if uploaded_image_bytes:
+            try:
+                uploaded_pil_image = Image.open(BytesIO(uploaded_image_bytes)).convert("RGB")
+                background_image_url = pil_image_to_base64(uploaded_pil_image)
+            except Exception as e:
+                st.error(f"Failed to load uploaded image as background: {e}")
         else:
-            # Use uploaded image as background
-            uploaded_image_bytes = st.session_state.get('uploaded_image_bytes')
-            if uploaded_image_bytes:
-                try:
-                    uploaded_pil_image = Image.open(BytesIO(uploaded_image_bytes)).convert("RGB")
-                    background_image_url = pil_image_to_base64(uploaded_pil_image)
-                    # st.success("🎨 Using uploaded image as brochure background (colored background detected).")
-                except Exception as e:
-                    st.error(f"Failed to load uploaded image as background: {e}")
-                    # Fallback to default
-                    script_dir = os.path.dirname(os.path.abspath(__file__))
-                    project_root = os.path.dirname(script_dir)
-                    background_image_path = os.path.join(project_root, "assets", "brochure_bg.png")
-                    if os.path.exists(background_image_path):
-                        bg_image = Image.open(background_image_path).convert("RGB")
-                        background_image_url = pil_image_to_base64(bg_image)
-            else:
-                st.warning("⚠️ Uploaded image not found. Using default background.")
-                # Fallback to default
-                script_dir = os.path.dirname(os.path.abspath(__file__))
-                project_root = os.path.dirname(script_dir)
-                background_image_path = os.path.join(project_root, "assets", "brochure_bg.png")
-                if os.path.exists(background_image_path):
-                    bg_image = Image.open(background_image_path).convert("RGB")
-                    background_image_url = pil_image_to_base64(bg_image)
+            st.warning("⚠️ Uploaded image not found. Please upload an image in Step 1 first.")
         
-        # Use detected overlay only for colored backgrounds (to overlay on existing plots)
-        plot_overlay_url = None
-        if background_type == 'colored':
-            # For colored backgrounds, overlay detected plots on top of existing plots
-            plot_overlay_url = st.session_state.get('detected_overlay_url', "")
-            if not plot_overlay_url:
-                st.warning("⚠️ No detected overlay available. Please run detection in Step 1 first.")
-        # For white backgrounds, we don't need overlay (colored plots are enough)
+        # Use detected overlay to show plot boundaries on top of the original image
+        plot_overlay_url = st.session_state.get('detected_overlay_url', "")
+        if not plot_overlay_url:
+            st.warning("⚠️ No detected overlay available. Please run detection in Step 1 first.")
         
         # Plot Status Controls
-        st.subheader("Plot Status Controls")
         st.caption("Statuses are auto-assigned. Click below to randomize them anytime.")
         
-        col_status_btn, col_status_summary = st.columns([1.5, 2])
-        with col_status_btn:
-            if st.button("🔀 Randomize plot statuses", key="randomize_statuses"):
-                for plot_id in st.session_state.plot_statuses:
-                    st.session_state.plot_statuses[plot_id] = random.choice(PLOT_STATUS_OPTIONS)
-                st.success("Plot statuses randomized.")
-        
-        with col_status_summary:
-            status_counts = {status: 0 for status in PLOT_STATUS_OPTIONS}
-            for status in st.session_state.plot_statuses.values():
-                if status in status_counts:
-                    status_counts[status] += 1
-            for status, count in status_counts.items():
-                st.write(f"- `{status}`: {count}")
+        if st.button("Randomize plot statuses", type="primary", key="randomize_statuses"):
+            for plot_id in st.session_state.plot_statuses:
+                st.session_state.plot_statuses[plot_id] = random.choice(PLOT_STATUS_OPTIONS)
+            st.success("Plot statuses randomized.")
         
         # Build plot payload with current statuses
         def build_plot_payload(plot):
@@ -2127,15 +3042,47 @@ elif st.session_state.current_step == 5:
                 if lat_vals and lon_vals:
                     geo_lat = sum(lat_vals) / len(lat_vals)
                     geo_lon = sum(lon_vals) / len(lon_vals)
+            
+            # Get plot_number - ensure it's always set correctly
+            plot_number = plot.get('plot_number')
+            plot_id = plot.get('plot_id', 'unknown')
+            
+            # If plot_number is None or 0, try to extract it from plot_id
+            if plot_number is None or plot_number == 0:
+                import re
+                id_match = re.search(r'(\d+)', str(plot_id))
+                if id_match:
+                    plot_number = int(id_match.group(1))
+                else:
+                    plot_number = None
+            
             return {
-                "id": plot.get('plot_id', 'unknown'),
+                "id": plot_id,
+                "plot_number": plot_number,  # Include plot number for display (always set correctly)
                 "points": points,
                 "lat": geo_lat,
                 "lon": geo_lon,
-                "status": st.session_state.plot_statuses.get(plot.get('plot_id'), "available")
+                "status": st.session_state.plot_statuses.get(plot_id, "available")
             }
         
-        plots_payload = [build_plot_payload(plot) for plot in st.session_state.plots if plot.get('corners')]
+        # Filter plots to only include those with valid corners
+        def has_valid_corners(plot):
+            corners = plot.get('corners', {})
+            if not corners:
+                return False
+            required_corners = ['A', 'B', 'C', 'D']
+            if not all(corner in corners for corner in required_corners):
+                return False
+            # Validate coordinates are numbers
+            try:
+                for corner in required_corners:
+                    int(corners[corner].get('x', 0))
+                    int(corners[corner].get('y', 0))
+                return True
+            except (KeyError, ValueError, TypeError):
+                return False
+        
+        plots_payload = [build_plot_payload(plot) for plot in st.session_state.plots if has_valid_corners(plot)]
         
         # Auto-render interactive Fabric Canvas
         if background_image_url and plots_payload:
@@ -2144,6 +3091,114 @@ elif st.session_state.current_step == 5:
                 plots=plots_payload,
                 plot_overlay_url=plot_overlay_url if plot_overlay_url else None
             )
+            
+            # Initialize status updates storage
+            if 'pending_status_updates' not in st.session_state:
+                st.session_state.pending_status_updates = {}
+            
+            # JavaScript to listen for status update messages and store them
+            status_updates_container = st.empty()
+            
+            # Add message listener script
+            st.components.v1.html("""
+            <div id="status-updates-container"></div>
+            <script>
+                (function() {
+                    // Store for pending updates
+                    window.pendingStatusUpdates = window.pendingStatusUpdates || {};
+                    
+                    // Listen for messages from the brochure viewer iframe
+                    window.addEventListener('message', function(event) {
+                        if (event.data && event.data.type === 'plot_status_update') {
+                            console.log('Received status update:', event.data);
+                            
+                            // Store the update
+                            window.pendingStatusUpdates[event.data.plotId] = {
+                                plotId: event.data.plotId,
+                                newStatus: event.data.newStatus,
+                                oldStatus: event.data.oldStatus,
+                                timestamp: event.data.timestamp
+                            };
+                            
+                            // Update the container with current updates count
+                            let container = document.getElementById('status-updates-container');
+                            if (container) {
+                                let count = Object.keys(window.pendingStatusUpdates).length;
+                                container.innerHTML = '<input type="hidden" id="status-updates-count" value="' + count + '">';
+                            }
+                            
+                            // Show notification
+                            showStatusUpdateNotification(event.data.plotId, event.data.newStatus);
+                            
+                            // Apply update immediately by updating URL query parameter
+                            applyStatusUpdateImmediately(event.data.plotId, event.data.newStatus);
+                        }
+                    });
+                    
+                    function showStatusUpdateNotification(plotId, newStatus) {
+                        let notification = document.getElementById('status-update-notification');
+                        if (!notification) {
+                            notification = document.createElement('div');
+                            notification.id = 'status-update-notification';
+                            notification.style.cssText = 'position: fixed; top: 20px; right: 20px; background: #4CAF50; color: white; padding: 12px 20px; border-radius: 6px; box-shadow: 0 4px 12px rgba(0,0,0,0.3); z-index: 10000; font-family: Arial, sans-serif; font-size: 14px; max-width: 300px;';
+                            document.body.appendChild(notification);
+                        }
+                        notification.innerHTML = '✅ Plot ' + plotId + ' status changed to <strong>' + newStatus + '</strong><br><small>Changes saved automatically</small>';
+                        notification.style.display = 'block';
+                        
+                        setTimeout(function() {
+                            notification.style.display = 'none';
+                        }, 4000);
+                    }
+                    
+                    function applyStatusUpdateImmediately(plotId, newStatus) {
+                        // Trigger Streamlit to read and apply by setting a query parameter
+                        const url = new URL(window.location);
+                        url.searchParams.set('status_update', plotId + ':' + newStatus);
+                        url.searchParams.set('_timestamp', Date.now());
+                        // Use history API to update URL and trigger Streamlit rerun
+                        window.history.replaceState({}, '', url);
+                        
+                        // Trigger a small delay then reload to apply
+                        setTimeout(function() {
+                            window.location.reload();
+                        }, 500);
+                    }
+                    
+                    // Make updates accessible to Streamlit
+                    window.getPendingStatusUpdates = function() {
+                        return window.pendingStatusUpdates;
+                    };
+                    
+                    window.clearPendingStatusUpdates = function() {
+                        window.pendingStatusUpdates = {};
+                        let container = document.getElementById('status-updates-container');
+                        if (container) {
+                            container.innerHTML = '<input type="hidden" id="status-updates-count" value="0">';
+                        }
+                    };
+                })();
+            </script>
+            """, height=0)
+            
+            # Check for status updates from query parameters
+            query_params = st.query_params
+            if 'status_update' in query_params:
+                status_update = query_params['status_update']
+                try:
+                    plot_id, new_status = status_update.split(':', 1)
+                    if plot_id in st.session_state.plot_statuses and new_status in PLOT_STATUS_OPTIONS:
+                        old_status = st.session_state.plot_statuses[plot_id]
+                        st.session_state.plot_statuses[plot_id] = new_status
+                        # Remove the query parameter to avoid reprocessing
+                        st.query_params.pop('status_update', None)
+                        st.query_params.pop('_timestamp', None)
+                        st.rerun()
+                except (ValueError, KeyError):
+                    pass
+            
+            # Add UI info
+            st.caption("💡 **Tip:** Click on any plot in the preview above to change its status. Colors: 🟢 Available (Green), 🔵 Booked (Blue), 🔴 Sold (Red). Changes are saved automatically.")
             
             # Add controls panel for brochure viewer
             st.components.v1.html("""
@@ -2173,6 +3228,10 @@ elif st.session_state.current_step == 5:
                         width: 40px; height: 40px; border-radius: 50%; border: none;
                         background: #6366f1; color: white; font-size: 18px; cursor: pointer;
                     ">-</button>
+                    <input type="number" id="brochure-scale-input" value="1.0" step="0.1" min="0.1" max="5.0" placeholder="Scale" style="
+                        width: 80px; height: 35px; border: 1px solid #ccc; border-radius: 4px;
+                        padding: 5px; text-align: center; font-size: 13px; margin-left: 5px;
+                    ">
                 </div>
                 <div style="display: flex; align-items: center; gap: 10px;">
                     <span style="font-weight: bold; color: #333; margin-right: 5px;">Move</span>
@@ -2199,6 +3258,14 @@ elif st.session_state.current_step == 5:
                         ">▼</button>
                         <div></div>
                     </div>
+                    <input type="number" id="brochure-move-x-input" value="0" step="1" placeholder="X px" style="
+                        width: 70px; height: 35px; border: 1px solid #ccc; border-radius: 4px;
+                        padding: 5px; text-align: center; font-size: 13px; margin-left: 5px;
+                    ">
+                    <input type="number" id="brochure-move-y-input" value="0" step="1" placeholder="Y px" style="
+                        width: 70px; height: 35px; border: 1px solid #ccc; border-radius: 4px;
+                        padding: 5px; text-align: center; font-size: 13px;
+                    ">
                 </div>
                 <div style="display: flex; align-items: center; gap: 10px;">
                     <span style="font-weight: bold; color: #333; margin-right: 5px;">Rotate</span>
@@ -2380,10 +3447,13 @@ elif st.session_state.current_step == 5:
                         // Buttons are in the same document as this script
                         const scaleUpBtn = document.getElementById('brochure-scale-up');
                         const scaleDownBtn = document.getElementById('brochure-scale-down');
+                        const scaleInput = document.getElementById('brochure-scale-input');
                         const moveUpBtn = document.getElementById('brochure-move-up');
                         const moveDownBtn = document.getElementById('brochure-move-down');
                         const moveLeftBtn = document.getElementById('brochure-move-left');
                         const moveRightBtn = document.getElementById('brochure-move-right');
+                        const moveXInput = document.getElementById('brochure-move-x-input');
+                        const moveYInput = document.getElementById('brochure-move-y-input');
                         const rotateInput = document.getElementById('brochure-rotate-input');
                         
                         console.log('Looking for buttons:', {
@@ -2405,114 +3475,132 @@ elif st.session_state.current_step == 5:
                         
                         const iframeWindow = brochureIframe.contentWindow;
                         
+                        // Scale input handler
+                        if (scaleInput) {
+                            scaleInput.onchange = function() {
+                                const scaleValue = parseFloat(this.value) || 1.0;
+                                if (scaleValue >= 0.1 && scaleValue <= 5.0) {
+                                    iframeWindow.currentScale = scaleValue;
+                                    applyTransform();
+                                } else {
+                                    this.value = iframeWindow.currentScale || 1.0;
+                                }
+                            };
+                        }
+                        
                         if (scaleUpBtn) {
                             scaleUpBtn.onclick = function(e) {
                                 e.preventDefault();
                                 e.stopPropagation();
-                                console.log('Scale up clicked!');
                                 try {
                                     const currentScale = iframeWindow.currentScale || 1.0;
-                                    iframeWindow.currentScale = currentScale * 1.1;
-                                    console.log('New scale:', iframeWindow.currentScale);
+                                    const newScale = currentScale * 1.1;
+                                    iframeWindow.currentScale = newScale;
+                                    if (scaleInput) scaleInput.value = newScale.toFixed(2);
                                     applyTransform();
                                 } catch(err) {
                                     console.error('Error in scale up:', err);
                                 }
                                 return false;
                             };
-                            console.log('Scale up button connected');
-                        } else {
-                            console.log('Scale up button NOT found!');
                         }
                         
                         if (scaleDownBtn) {
                             scaleDownBtn.onclick = function(e) {
                                 e.preventDefault();
                                 e.stopPropagation();
-                                console.log('Scale down clicked!');
                                 try {
                                     const currentScale = iframeWindow.currentScale || 1.0;
-                                    iframeWindow.currentScale = currentScale / 1.1;
-                                    console.log('New scale:', iframeWindow.currentScale);
+                                    const newScale = currentScale / 1.1;
+                                    iframeWindow.currentScale = newScale;
+                                    if (scaleInput) scaleInput.value = newScale.toFixed(2);
                                     applyTransform();
                                 } catch(err) {
                                     console.error('Error in scale down:', err);
                                 }
                                 return false;
                             };
-                            console.log('Scale down button connected');
-                        } else {
-                            console.log('Scale down button NOT found!');
+                        }
+                        
+                        // Move input handlers
+                        if (moveXInput) {
+                            moveXInput.onchange = function() {
+                                const moveValue = parseFloat(this.value) || 0;
+                                iframeWindow.currentOffsetX = moveValue;
+                                applyTransform();
+                            };
+                        }
+                        
+                        if (moveYInput) {
+                            moveYInput.onchange = function() {
+                                const moveValue = parseFloat(this.value) || 0;
+                                iframeWindow.currentOffsetY = moveValue;
+                                applyTransform();
+                            };
                         }
                         
                         if (moveUpBtn) {
                             moveUpBtn.onclick = function(e) {
                                 e.preventDefault();
                                 e.stopPropagation();
-                                console.log('Move up clicked!');
                                 try {
-                                    iframeWindow.currentOffsetY = (iframeWindow.currentOffsetY || 0) - 10;
-                                    console.log('New offsetY:', iframeWindow.currentOffsetY);
+                                    const moveAmount = parseFloat(moveYInput?.value) || 10;
+                                    iframeWindow.currentOffsetY = (iframeWindow.currentOffsetY || 0) - moveAmount;
+                                    if (moveYInput) moveYInput.value = iframeWindow.currentOffsetY;
                                     applyTransform();
                                 } catch(err) {
                                     console.error('Error in move up:', err);
                                 }
                                 return false;
                             };
-                            console.log('Move up button connected');
                         }
                         
                         if (moveDownBtn) {
                             moveDownBtn.onclick = function(e) {
                                 e.preventDefault();
                                 e.stopPropagation();
-                                console.log('Move down clicked!');
                                 try {
-                                    iframeWindow.currentOffsetY = (iframeWindow.currentOffsetY || 0) + 10;
-                                    console.log('New offsetY:', iframeWindow.currentOffsetY);
+                                    const moveAmount = parseFloat(moveYInput?.value) || 10;
+                                    iframeWindow.currentOffsetY = (iframeWindow.currentOffsetY || 0) + moveAmount;
+                                    if (moveYInput) moveYInput.value = iframeWindow.currentOffsetY;
                                     applyTransform();
                                 } catch(err) {
                                     console.error('Error in move down:', err);
                                 }
                                 return false;
                             };
-                            console.log('Move down button connected');
-                        } else {
-                            console.log('Move down button NOT found!');
                         }
                         
                         if (moveLeftBtn) {
                             moveLeftBtn.onclick = function(e) {
                                 e.preventDefault();
                                 e.stopPropagation();
-                                console.log('Move left clicked!');
                                 try {
-                                    iframeWindow.currentOffsetX = (iframeWindow.currentOffsetX || 0) - 10;
-                                    console.log('New offsetX:', iframeWindow.currentOffsetX);
+                                    const moveAmount = parseFloat(moveXInput?.value) || 10;
+                                    iframeWindow.currentOffsetX = (iframeWindow.currentOffsetX || 0) - moveAmount;
+                                    if (moveXInput) moveXInput.value = iframeWindow.currentOffsetX;
                                     applyTransform();
                                 } catch(err) {
                                     console.error('Error in move left:', err);
                                 }
                                 return false;
                             };
-                            console.log('Move left button connected');
                         }
                         
                         if (moveRightBtn) {
                             moveRightBtn.onclick = function(e) {
                                 e.preventDefault();
                                 e.stopPropagation();
-                                console.log('Move right clicked!');
                                 try {
-                                    iframeWindow.currentOffsetX = (iframeWindow.currentOffsetX || 0) + 10;
-                                    console.log('New offsetX:', iframeWindow.currentOffsetX);
+                                    const moveAmount = parseFloat(moveXInput?.value) || 10;
+                                    iframeWindow.currentOffsetX = (iframeWindow.currentOffsetX || 0) + moveAmount;
+                                    if (moveXInput) moveXInput.value = iframeWindow.currentOffsetX;
                                     applyTransform();
                                 } catch(err) {
                                     console.error('Error in move right:', err);
                                 }
                                 return false;
                             };
-                            console.log('Move right button connected');
                         }
                         
                         if (rotateInput) {
@@ -2568,28 +3656,28 @@ elif st.session_state.current_step == 5:
             </script>
             """, height=200)
         elif not background_image_url:
-            st.error("❌ Background image not found. Please ensure assets/brochure_bg.png exists.")
+            st.error("❌ Background image not found. Please upload an image in Step 1 first.")
         elif not plots_payload:
             st.warning("⚠️ No plots with valid coordinates found.")
         
         # Navigation buttons for Step 5
-        col_btn1, col_btn2, col_btn3 = st.columns([6, 2, 2])
+        col_btn1, col_btn2, col_btn3 = st.columns([8, 1, 1])
         with col_btn1:
             st.write("")  # Spacer for alignment
         with col_btn2:
-            if st.button("Previous", use_container_width=True, key="prev_step5"):
+            if st.button("Previous", type="primary", key="prev_step5"):
                 st.session_state.current_step = 4  # Go back to Step 4
                 st.rerun()
         with col_btn3:
-            if st.button("Next", type="primary", use_container_width=True, key="next_step5"):
+            if st.button("Next", type="primary", key="next_step5"):
                 st.session_state.current_step = 6  # Go to Step 6 (Configure Map Settings)
                 st.rerun()
     else:
         st.info("Please complete previous steps first.")
 
 # STEP 6: Configure Map Settings (moved from Step 5)
-elif st.session_state.current_step == 6:
-    st.header("6 - Configure Map Settings")
+elif current_step == 6:
+    st.header("Configure Map Settings")
     
     if st.session_state.plots:
         col1, col2 = st.columns(2)
@@ -2614,7 +3702,7 @@ elif st.session_state.current_step == 6:
             with col2b:
                 ref_lon = st.number_input("Longitude", value=77.0001, format="%.6f", key="config_lon")
         
-        if st.button("🗺️ Generate Map", type="primary", key="generate_map_config"):
+        if st.button("Generate Map", type="primary", key="generate_map_config"):
             with st.spinner("Calculating..."):
                 st.session_state.geo_plots = calculate_geocoordinates(
                     st.session_state.plots, ref_plot_id, ref_corner,
@@ -2625,28 +3713,27 @@ elif st.session_state.current_step == 6:
         
         # Navigation buttons for Step 6
         if st.session_state.geo_plots:
-            col_btn1, col_btn2, col_btn3 = st.columns([6, 2, 2])
+            col_btn1, col_btn2, col_btn3 = st.columns([8, 1, 1])
             with col_btn2:
-                if st.button("Previous", use_container_width=True, key="prev_step6"):
+                if st.button("Previous", type="primary", key="prev_step6"):
                     st.session_state.current_step = 5  # Go back to Step 5
                     st.rerun()
             with col_btn3:
-                if st.button("Next", type="primary", use_container_width=True, key="next_step6"):
+                if st.button("Next", type="primary", key="next_step6"):
                     st.session_state.current_step = 7  # Go to Step 7 (Update Lat and Long)
                     st.rerun()
     else:
         st.info("Please complete previous steps first.")
 
 # STEP 4: Preview Polygons (shows regenerated image based on edits)
-elif st.session_state.current_step == 4:
-    st.header("4 - Preview Polygons")
+elif current_step == 4:
+
 
     if st.session_state.plots:
-        st.subheader("📸 Regenerated Image Preview")
         st.write("**This preview shows the updated image based on any edits made in previous steps.**")
         
         # Button to manually regenerate image from current plot coordinates
-        if st.button("🔄 Regenerate Image", type="primary", use_container_width=False):
+        if st.button("Regenerate Image", type="primary", use_container_width=False):
             st.rerun()
         
         # Always regenerate the image to ensure it's up to date with current plot data
@@ -2665,16 +3752,28 @@ elif st.session_state.current_step == 4:
             display_img = np.ones((height, width, 3), dtype=np.uint8) * 255
             
             # Redraw all plots with current coordinates and updated plot numbers
+            # Only draw plots that have valid corners
             for plot in st.session_state.plots:
                 corners = plot.get('corners', {})
                 if not corners:
                     continue
-                pts = np.array([
-                    [corners['A']['x'], corners['A']['y']],
-                    [corners['B']['x'], corners['B']['y']],
-                    [corners['C']['x'], corners['C']['y']],
-                    [corners['D']['x'], corners['D']['y']]
-                ], np.int32)
+                
+                # Validate that all corners exist and have valid coordinates
+                required_corners = ['A', 'B', 'C', 'D']
+                if not all(corner in corners for corner in required_corners):
+                    continue
+                
+                # Validate coordinates are numbers
+                try:
+                    pts = np.array([
+                        [int(corners['A']['x']), int(corners['A']['y'])],
+                        [int(corners['B']['x']), int(corners['B']['y'])],
+                        [int(corners['C']['x']), int(corners['C']['y'])],
+                        [int(corners['D']['x']), int(corners['D']['y'])]
+                    ], np.int32)
+                except (KeyError, ValueError, TypeError):
+                    # Skip plots with invalid coordinates
+                    continue
                 # Red lines for plot boundaries (BGR format: red = (0, 0, 255))
                 cv2.polylines(display_img, [pts], True, (0, 0, 255), 2)
                 
@@ -2705,22 +3804,22 @@ elif st.session_state.current_step == 4:
             st.warning("⚠️ No detection image available. Please go back to Step 1 and detect plots.")
         
         # Navigation buttons for Step 4
-        col_btn1, col_btn2, col_btn3 = st.columns([6, 2, 2])
+        col_btn1, col_btn2, col_btn3 = st.columns([8, 1, 1])
         with col_btn2:
-            if st.button("Previous", use_container_width=True, key="prev_step4"):
+            if st.button("Previous", type="primary", key="prev_step4"):
                 st.session_state.current_step = 3  # Go back to Step 3
                 st.rerun()
         with col_btn3:
-            if st.button("Next", type="primary", use_container_width=True, key="next_step4"):
+            if st.button("Next", type="primary", key="next_step4"):
                 st.session_state.current_step = 5  # Go to Step 5 (Preview in Brochure)
                 st.rerun()
     else:
         st.info("Please detect plots first.")
 
 # STEP 7: Update Lat and Long (update geo coordinates)
-elif st.session_state.current_step == 7:
-    st.header("7 - Update Lat and Long")
-    
+elif current_step == 7:
+    st.header("Update Lat and Long")
+   
     if st.session_state.plots:
         if not st.session_state.geo_plots:
             st.warning("⚠️ Please configure map settings in Step 6 (Configure Map Settings) first.")
@@ -2798,6 +3897,12 @@ elif st.session_state.current_step == 7:
             if 'latlon_grid_refresh' not in st.session_state:
                 st.session_state.latlon_grid_refresh = 0
             
+            # Store original geo_plots data for change detection
+            if 'original_geo_plots_for_edit' not in st.session_state or st.session_state.get('geo_plots_snapshot_saved', False) == False:
+                import copy
+                st.session_state.original_geo_plots_for_edit = copy.deepcopy(st.session_state.geo_plots)
+                st.session_state.geo_plots_snapshot_saved = True
+            
             # Display editable table
             edited_df = st.data_editor(
                 editable_df,
@@ -2828,161 +3933,148 @@ elif st.session_state.current_step == 7:
             )
             
             # Apply changes button
-            if st.button("💾 Apply Changes", type="primary", use_container_width=False):
+            if st.button("Save Changes", type="primary", use_container_width=False):
+                import copy
+                
                 changes_made = False
                 updated_count = 0
-                any_plot_changed = False
                 
-                # Check if reference plot settings are available (outside loop)
-                has_ref_settings = ('px_to_ft' in st.session_state and 
-                                  'ref_plot_id' in st.session_state and
-                                  st.session_state.ref_plot_id)
+                # Get original geo_plots data for comparison
+                original_geo_plots = st.session_state.get('original_geo_plots_for_edit', [])
                 
-                # First pass: Update the plots that were edited
+                # Step 1: Detect which plot(s) had lat/lon changes and calculate offsets
+                changed_plots = []
+                offsets = {}  # Store offsets per plot and corner
+                
                 for idx, row in edited_df.iterrows():
                     plot_num = sorted_geo_plots[idx]['plot_number']
-                    geo_plot = next((gp for gp in st.session_state.geo_plots if gp['plot_number'] == plot_num), None)
-                    pixel_plot = next((p for p in st.session_state.plots if p.get('plot_number') == plot_num), None)
                     
-                    if geo_plot and pixel_plot:
-                        # Store original values to detect changes
-                        original_pixel_corners = pixel_plot.get('corners', {}).copy()
-                        original_geo_corners = geo_plot.get('corners', {}).copy()
+                    # Find original plot
+                    original_geo_plot = next((gp for gp in original_geo_plots if gp['plot_number'] == plot_num), None)
+                    
+                    if original_geo_plot:
+                        plot_changed = False
+                        plot_offsets = {}
                         
-                        if has_ref_settings:
-                            ref_plot = next((p for p in st.session_state.plots if p.get('plot_id') == st.session_state.ref_plot_id), None)
-                            ref_geo_plot = next((gp for gp in st.session_state.geo_plots if gp.get('plot_id') == st.session_state.ref_plot_id), None)
+                        for corner in ['A', 'B', 'C', 'D']:
+                            new_lat = float(row[f'{corner}_lat'])
+                            new_lon = float(row[f'{corner}_lon'])
                             
-                            if ref_plot and ref_plot.get('corners') and ref_geo_plot and ref_geo_plot.get('corners'):
-                                ref_corner = st.session_state.get('ref_corner', 'A')
-                                # Get pixel coordinates from pixel plot
-                                ref_pixel_corner = ref_plot['corners'].get(ref_corner, {})
-                                ref_x = ref_pixel_corner.get('x')
-                                ref_y = ref_pixel_corner.get('y')
-                                # Get lat/lon from geo plot (this is the correct source)
-                                ref_geo_corner = ref_geo_plot['corners'].get(ref_corner, {})
-                                ref_lat = ref_geo_corner.get('lat')
-                                ref_lon = ref_geo_corner.get('lon')
+                            orig_lat = original_geo_plot['corners'][corner]['lat']
+                            orig_lon = original_geo_plot['corners'][corner]['lon']
+                            
+                            # Calculate offset
+                            delta_lat = new_lat - orig_lat
+                            delta_lon = new_lon - orig_lon
+                            
+                            # Check if this corner changed significantly
+                            if abs(delta_lat) > 0.0000001 or abs(delta_lon) > 0.0000001:
+                                plot_changed = True
+                                plot_offsets[corner] = {
+                                    'delta_lat': delta_lat,
+                                    'delta_lon': delta_lon
+                                }
+                        
+                        if plot_changed:
+                            changed_plots.append({
+                                'plot_num': plot_num,
+                                'idx': idx,
+                                'offsets': plot_offsets
+                            })
+                
+                # Step 2: If any plot changed, apply the same offset to ALL plots
+                if changed_plots:
+                    with st.spinner("🔄 Applying changes to all plots proportionally..."):
+                        # Use the first changed plot as reference for the transformation
+                        reference_change = changed_plots[0]
+                        ref_offsets = reference_change['offsets']
+                        
+                        # Calculate average offset across all changed corners
+                        total_delta_lat = 0
+                        total_delta_lon = 0
+                        corner_count = 0
+                        
+                        for corner, offset_data in ref_offsets.items():
+                            total_delta_lat += offset_data['delta_lat']
+                            total_delta_lon += offset_data['delta_lon']
+                            corner_count += 1
+                        
+                        if corner_count > 0:
+                            avg_delta_lat = total_delta_lat / corner_count
+                            avg_delta_lon = total_delta_lon / corner_count
+                            
+                            st.info(f"📍 Reference change detected: Δlat={avg_delta_lat:.8f}, Δlon={avg_delta_lon:.8f}")
+                            st.info(f"🔄 Applying this offset to all {len(st.session_state.geo_plots)} plots...")
+                            
+                            # Apply offset to ALL plots (including the one that was changed)
+                            for geo_plot in st.session_state.geo_plots:
+                                plot_num = geo_plot['plot_number']
                                 
-                                if all(v is not None for v in [ref_lat, ref_lon, ref_x, ref_y]):
-                                    px_to_ft = st.session_state.px_to_ft
+                                # Find the corresponding row in edited_df
+                                plot_idx = next((i for i, gp in enumerate(sorted_geo_plots) if gp['plot_number'] == plot_num), None)
+                                
+                                if plot_idx is not None:
+                                    # Get the edited values for this plot
+                                    edited_row = edited_df.iloc[plot_idx]
                                     
-                                    # First, collect all new values and check what changed for the entire plot
-                                    new_values = {}
-                                    any_pixel_changed = False
-                                    any_geo_changed = False
-                                    
+                                    # Apply offset to each corner
                                     for corner in ['A', 'B', 'C', 'D']:
-                                        new_x = float(row[f'{corner}_x'])
-                                        new_y = float(row[f'{corner}_y'])
-                                        new_lat = float(row[f'{corner}_lat'])
-                                        new_lon = float(row[f'{corner}_lon'])
+                                        # Get the edited value (which may already include changes)
+                                        edited_lat = float(edited_row[f'{corner}_lat'])
+                                        edited_lon = float(edited_row[f'{corner}_lon'])
                                         
-                                        # Get original values
-                                        orig_x = original_pixel_corners.get(corner, {}).get('x', 0)
-                                        orig_y = original_pixel_corners.get(corner, {}).get('y', 0)
-                                        orig_lat = original_geo_corners.get(corner, {}).get('lat', 0)
-                                        orig_lon = original_geo_corners.get(corner, {}).get('lon', 0)
+                                        # Get original value
+                                        original_plot = next((gp for gp in original_geo_plots if gp['plot_number'] == plot_num), None)
                                         
-                                        # Check if this corner changed
-                                        x_changed = abs(new_x - orig_x) > 0.01
-                                        y_changed = abs(new_y - orig_y) > 0.01
-                                        lat_changed = abs(new_lat - orig_lat) > 0.0000001
-                                        lon_changed = abs(new_lon - orig_lon) > 0.0000001
-                                        
-                                        if x_changed or y_changed:
-                                            any_pixel_changed = True
-                                        if lat_changed or lon_changed:
-                                            any_geo_changed = True
-                                        
-                                        new_values[corner] = {
-                                            'x': new_x,
-                                            'y': new_y,
-                                            'lat': new_lat,
-                                            'lon': new_lon
-                                        }
-                                    
-                                    # Now recalculate all corners based on what changed
-                                    if any_geo_changed:
-                                        # If ANY lat/lon changed, recalculate ALL pixel coordinates
-                                        for corner in ['A', 'B', 'C', 'D']:
-                                            new_lat = new_values[corner]['lat']
-                                            new_lon = new_values[corner]['lon']
-                                            calculated_x, calculated_y = recalculate_pixel_from_coordinates(
-                                                ref_lat, ref_lon, ref_x, ref_y, new_lat, new_lon, px_to_ft
-                                            )
-                                            pixel_plot['corners'][corner]['x'] = calculated_x
-                                            pixel_plot['corners'][corner]['y'] = calculated_y
+                                        if original_plot:
+                                            orig_lat = original_plot['corners'][corner]['lat']
+                                            orig_lon = original_plot['corners'][corner]['lon']
+                                            
+                                            # Apply the reference offset to the original values
+                                            new_lat = orig_lat + avg_delta_lat
+                                            new_lon = orig_lon + avg_delta_lon
+                                            
+                                            # Update geo_plot
                                             geo_plot['corners'][corner]['lat'] = new_lat
                                             geo_plot['corners'][corner]['lon'] = new_lon
-                                        changes_made = True
-                                    
-                                    elif any_pixel_changed:
-                                        # If ANY pixel x/y changed, recalculate ALL lat/lon
-                                        for corner in ['A', 'B', 'C', 'D']:
-                                            new_x = new_values[corner]['x']
-                                            new_y = new_values[corner]['y']
-                                            calculated_lat, calculated_lon = recalculate_coordinates_from_pixel(
-                                                ref_lat, ref_lon, ref_x, ref_y, new_x, new_y, px_to_ft
-                                            )
-                                            geo_plot['corners'][corner]['lat'] = calculated_lat
-                                            geo_plot['corners'][corner]['lon'] = calculated_lon
-                                            pixel_plot['corners'][corner]['x'] = new_x
-                                            pixel_plot['corners'][corner]['y'] = new_y
-                                        changes_made = True
-                                    
-                                    else:
-                                        # No changes detected, but still update to ensure consistency
-                                        for corner in ['A', 'B', 'C', 'D']:
-                                            pixel_plot['corners'][corner]['x'] = new_values[corner]['x']
-                                            pixel_plot['corners'][corner]['y'] = new_values[corner]['y']
-                                            geo_plot['corners'][corner]['lat'] = new_values[corner]['lat']
-                                            geo_plot['corners'][corner]['lon'] = new_values[corner]['lon']
-                                    
-                                    if changes_made:
-                                        updated_count += 1
-                                        any_plot_changed = True
-                                else:
-                                    st.error(f"❌ Reference corner data incomplete for plot {plot_num}. Missing values.")
-                            else:
-                                st.error(f"❌ Reference plot not found or missing corners.")
-                        else:
-                            # No reference settings, just update values directly
-                            for corner in ['A', 'B', 'C', 'D']:
-                                pixel_plot['corners'][corner]['x'] = float(row[f'{corner}_x'])
-                                pixel_plot['corners'][corner]['y'] = float(row[f'{corner}_y'])
-                                geo_plot['corners'][corner]['lat'] = float(row[f'{corner}_lat'])
-                                geo_plot['corners'][corner]['lon'] = float(row[f'{corner}_lon'])
-                            changes_made = True
-                            updated_count += 1
-                            any_plot_changed = True
-                
-                # Second pass: If any plot changed, recalculate ALL plots to maintain consistency
-                if any_plot_changed and has_ref_settings:
-                    with st.spinner("🔄 Recalculating all plots based on changes..."):
-                        # Get current reference settings
-                        ref_plot_id = st.session_state.ref_plot_id
-                        ref_corner = st.session_state.get('ref_corner', 'A')
-                        px_to_ft = st.session_state.px_to_ft
-                        
-                        # Get updated reference plot's geo coordinates
-                        ref_geo_plot = next((gp for gp in st.session_state.geo_plots if gp.get('plot_id') == ref_plot_id), None)
-                        ref_plot = next((p for p in st.session_state.plots if p.get('plot_id') == ref_plot_id), None)
-                        
-                        if ref_geo_plot and ref_plot:
-                            ref_geo_corner = ref_geo_plot['corners'].get(ref_corner, {})
-                            ref_lat = ref_geo_corner.get('lat')
-                            ref_lon = ref_geo_corner.get('lon')
+                                            
+                                            # Also update pixel coordinates if reference settings are available
+                                            has_ref_settings = ('px_to_ft' in st.session_state and 
+                                                              'ref_plot_id' in st.session_state and
+                                                              st.session_state.ref_plot_id)
+                                            
+                                            if has_ref_settings:
+                                                ref_plot = next((p for p in st.session_state.plots if p.get('plot_id') == st.session_state.ref_plot_id), None)
+                                                ref_geo_plot = next((gp for gp in st.session_state.geo_plots if gp.get('plot_id') == st.session_state.ref_plot_id), None)
+                                                
+                                                if ref_plot and ref_geo_plot:
+                                                    ref_corner = st.session_state.get('ref_corner', 'A')
+                                                    ref_pixel_corner = ref_plot['corners'].get(ref_corner, {})
+                                                    ref_x = ref_pixel_corner.get('x')
+                                                    ref_y = ref_pixel_corner.get('y')
+                                                    ref_geo_corner = ref_geo_plot['corners'].get(ref_corner, {})
+                                                    ref_lat = ref_geo_corner.get('lat')
+                                                    ref_lon = ref_geo_corner.get('lon')
+                                                    
+                                                    if all(v is not None for v in [ref_lat, ref_lon, ref_x, ref_y]):
+                                                        px_to_ft = st.session_state.px_to_ft
+                                                        
+                                                        # Find pixel plot and update pixel coordinates
+                                                        pixel_plot = next((p for p in st.session_state.plots if p.get('plot_number') == plot_num), None)
+                                                        if pixel_plot:
+                                                            calculated_x, calculated_y = recalculate_pixel_from_coordinates(
+                                                                ref_lat, ref_lon, ref_x, ref_y, new_lat, new_lon, px_to_ft
+                                                            )
+                                                            pixel_plot['corners'][corner]['x'] = calculated_x
+                                                            pixel_plot['corners'][corner]['y'] = calculated_y
                             
-                            if ref_lat is not None and ref_lon is not None:
-                                # Recalculate ALL plots using the updated coordinates
-                                st.session_state.geo_plots = calculate_geocoordinates(
-                                    st.session_state.plots, ref_plot_id, ref_corner,
-                                    ref_lat, ref_lon, px_to_ft
-                                )
-                                changes_made = True
+                            changes_made = True
+                            updated_count = len(st.session_state.geo_plots)
                 
                 if changes_made:
+                    # Clear the snapshot so next time we start fresh
+                    st.session_state.geo_plots_snapshot_saved = False
+                    
                     # Increment refresh counter to force grid refresh
                     st.session_state.latlon_grid_refresh += 1
                     
@@ -2990,28 +4082,28 @@ elif st.session_state.current_step == 7:
                     st.session_state.geo_plots = st.session_state.geo_plots.copy()
                     st.session_state.plots = st.session_state.plots.copy()
                     
-                    st.success(f"✅ Coordinates updated successfully! All {len(st.session_state.geo_plots)} plots have been recalculated. Grid and map will refresh.")
+                    st.success(f"✅ Coordinates updated successfully! All {updated_count} plots have been adjusted proportionally. Grid and map will refresh.")
                     st.rerun()
                 else:
                     st.info("ℹ️ No changes detected. Values are already up to date.")
         
         # Navigation buttons for Step 7
         if st.session_state.geo_plots:
-            col_btn1, col_btn2, col_btn3 = st.columns([6, 2, 2])
+            col_btn1, col_btn2, col_btn3 = st.columns([8, 1, 1])
             with col_btn2:
-                if st.button("Previous", use_container_width=True, key="prev_step7"):
+                if st.button("Previous", type="primary", key="prev_step7"):
                     st.session_state.current_step = 6  # Go back to Step 6
                     st.rerun()
             with col_btn3:
-                if st.button("Next", type="primary", use_container_width=True, key="next_step7"):
+                if st.button("Next", type="primary", key="next_step7"):
                     st.session_state.current_step = 8  # Go to Step 8 (Preview in Google Map)
                     st.rerun()
     else:
         st.info("Please complete previous steps first.")
 
 # STEP 8: Preview in Google Map (shows map view)
-elif st.session_state.current_step == 8:
-    st.header("8 - Preview in Google Map")
+elif current_step == 8:
+    
     
     if not st.session_state.plots:
         st.info("⚠️ Please complete the configuration steps in the 'Detection & Configuration' tab and generate the map first.")
@@ -3101,11 +4193,171 @@ elif st.session_state.current_step == 8:
                 
                 st.divider()
         
+        # Handle coordinate updates from JavaScript
+        query_params = st.query_params
+        if 'plot_move_update' in query_params:
+            try:
+                update_data_str = query_params['plot_move_update']
+                update_data = json.loads(update_data_str)
+                
+                if update_data.get('type') == 'plot_coordinates_update' and 'updated_plots' in update_data:
+                    updated_plots = update_data['updated_plots']
+                    
+                    print(f"🔄 Processing plot move update: {len(updated_plots)} plots")
+                    
+                    # Update session state geo_plots with new coordinates
+                    updated_count = 0
+                    for updated_plot in updated_plots:
+                        plot_id = updated_plot.get('plot_id')
+                        if plot_id:
+                            # Find matching plot in session state
+                            for geo_plot in st.session_state.geo_plots:
+                                if geo_plot.get('plot_id') == plot_id:
+                                    # Update corners
+                                    for corner in ['A', 'B', 'C', 'D']:
+                                        if corner in updated_plot.get('corners', {}):
+                                            old_lat = geo_plot['corners'][corner].get('lat')
+                                            old_lon = geo_plot['corners'][corner].get('lon')
+                                            new_lat = updated_plot['corners'][corner]['lat']
+                                            new_lon = updated_plot['corners'][corner]['lon']
+                                            
+                                            geo_plot['corners'][corner]['lat'] = new_lat
+                                            geo_plot['corners'][corner]['lon'] = new_lon
+                                            
+                                            if abs(old_lat - new_lat) > 0.000001 or abs(old_lon - new_lon) > 0.000001:
+                                                updated_count += 1
+                                    break
+                    
+                    print(f"✅ Updated {updated_count} coordinate pairs")
+                    
+                    # Update pixel coordinates based on the offset
+                    offset_lat = update_data.get('offset', {}).get('lat', 0)
+                    offset_lng = update_data.get('offset', {}).get('lng', 0)
+                    
+                    # Recalculate pixel coordinates for all plots
+                    if st.session_state.plots and st.session_state.geo_plots and 'px_to_ft' in st.session_state:
+                        # Find a reference plot that exists in both plots and geo_plots
+                        ref_plot = None
+                        ref_geo_plot = None
+                        ref_plot_id = None
+                        
+                        # Try to find first plot that exists in both
+                        for plot in st.session_state.plots:
+                            plot_id = plot.get('plot_id')
+                            geo_plot = next((gp for gp in st.session_state.geo_plots if gp.get('plot_id') == plot_id), None)
+                            if geo_plot:
+                                ref_plot = plot
+                                ref_geo_plot = geo_plot
+                                ref_plot_id = plot_id
+                                break
+                        
+                        if ref_plot and ref_geo_plot:
+                            # Get reference corner (use corner A of reference plot) - use UPDATED coordinates
+                            ref_geo_corner = ref_geo_plot.get('corners', {}).get('A', {})
+                            ref_lat = ref_geo_corner.get('lat', 0)
+                            ref_lon = ref_geo_corner.get('lon', 0)
+                            
+                            # Get original pixel coordinates of reference corner (before move)
+                            ref_pixel_corner = ref_plot.get('corners', {}).get('A', {})
+                            ref_x = ref_pixel_corner.get('x', 0)
+                            ref_y = ref_pixel_corner.get('y', 0)
+                            
+                            # Apply offset to pixel coordinates as well (simple approach)
+                            # Calculate pixel offset based on geo offset
+                            # Approximate: 1 degree lat ≈ 111km, 1 degree lon ≈ 111km * cos(lat)
+                            # Convert to pixels using px_to_ft
+                            ft_per_deg_lat = 111000 * 3.28084  # feet per degree latitude
+                            ft_per_deg_lon = 111000 * 3.28084 * math.cos(math.radians(ref_lat))
+                            
+                            px_per_deg_lat = ft_per_deg_lat / st.session_state.px_to_ft
+                            px_per_deg_lon = ft_per_deg_lon / st.session_state.px_to_ft
+                            
+                            pixel_offset_x = offset_lng * px_per_deg_lon
+                            pixel_offset_y = -offset_lat * px_per_deg_lat  # Negative because Y increases downward
+                            
+                            # Apply pixel offset to all plots
+                            for plot in st.session_state.plots:
+                                for corner in ['A', 'B', 'C', 'D']:
+                                    if corner in plot.get('corners', {}):
+                                        plot['corners'][corner]['x'] = int(plot['corners'][corner].get('x', 0) + pixel_offset_x)
+                                        plot['corners'][corner]['y'] = int(plot['corners'][corner].get('y', 0) + pixel_offset_y)
+                    
+                    # Regenerate detection image with updated coordinates
+                    if st.session_state.detection_image is not None and st.session_state.plots:
+                        original_img = st.session_state.detection_image.copy()
+                        if len(original_img.shape) == 3:
+                            height, width = original_img.shape[:2]
+                            display_img = np.ones((height, width, 3), dtype=np.uint8) * 255
+                        else:
+                            height, width = original_img.shape
+                            display_img = np.ones((height, width, 3), dtype=np.uint8) * 255
+                        
+                        # Redraw all plots with updated pixel coordinates
+                        for plot in st.session_state.plots:
+                            corners = plot.get('corners', {})
+                            if not corners:
+                                continue
+                            pts = np.array([
+                                [corners['A']['x'], corners['A']['y']],
+                                [corners['B']['x'], corners['B']['y']],
+                                [corners['C']['x'], corners['C']['y']],
+                                [corners['D']['x'], corners['D']['y']]
+                            ], np.int32)
+                            cv2.polylines(display_img, [pts], True, (0, 0, 255), 2)
+                            cv2.circle(display_img, (corners['A']['x'], corners['A']['y']), 4, (0, 0, 255), -1)
+                            cv2.circle(display_img, (corners['B']['x'], corners['B']['y']), 4, (0, 0, 255), -1)
+                            cv2.circle(display_img, (corners['C']['x'], corners['C']['y']), 4, (0, 0, 255), -1)
+                            cv2.circle(display_img, (corners['D']['x'], corners['D']['y']), 4, (0, 0, 255), -1)
+                            
+                            plot_number = plot.get('plot_number')
+                            if plot_number is not None:
+                                cx = sum([corners[c]['x'] for c in corners]) // 4
+                                cy = sum([corners[c]['y'] for c in corners]) // 4
+                                cv2.putText(display_img, str(plot_number),
+                                           (cx-10, cy+5), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 0), 2)
+                        
+                        st.session_state.detection_image = display_img
+                        st.session_state.detected_overlay_url = ndarray_to_data_url(display_img)
+                        # Don't overwrite original_image_base64 - preserve for background toggle
+                        if st.session_state.original_image_base64 is None:
+                            st.session_state.original_image_base64 = ndarray_to_data_url(display_img)
+                        st.session_state.brochure_overlay_url = st.session_state.detected_overlay_url
+                    
+                    # Remove query parameters to avoid reprocessing
+                    st.query_params.pop('plot_move_update', None)
+                    st.query_params.pop('_timestamp', None)
+                    
+                    target_pos = update_data.get('target_position', {})
+                    st.success(f"✅ All plots moved successfully! Plot layout centroid is now at ({target_pos.get('lat', 0):.6f}, {target_pos.get('lng', 0):.6f})")
+                    st.rerun()
+                    
+            except (json.JSONDecodeError, KeyError, ValueError) as e:
+                st.error(f"Error processing coordinate update: {e}")
+                # Remove invalid parameter
+                st.query_params.pop('plot_move_update', None)
+        
         # Map display section - only show if geo_plots exist
         if not st.session_state.geo_plots:
-            st.info("💡 Click '⚙️ Configure Map Settings' above to generate the map.")
+            st.info("Click '⚙️ Configure Map Settings' above to generate the map.")
         else:
-            st.subheader("📍 Interactive Map View")
+            st.subheader("Map View")
+            
+            # Add toggle for move mode
+            col_toggle, col_info = st.columns([1, 3])
+            with col_toggle:
+                move_mode_enabled = st.toggle(
+                    "Enable Move Mode",
+                    value=st.session_state.get('move_plots_enabled', False),
+                    key="toggle_move_mode",
+                    help="Enable to move all plots by clicking on the map. When enabled, click anywhere on the map to move all plots to that position."
+                )
+                st.session_state.move_plots_enabled = move_mode_enabled
+            
+            with col_info:
+                if st.session_state.get('move_plots_enabled', False):
+                    st.success("✅ **Move mode enabled!** Click anywhere on the map to move all plots to that position.")
+                else:
+                    st.caption("💡 Enable 'Move Mode' toggle, then click on the map to move all plots.")
             
             # Collect all valid coordinates from ALL plots for proper map bounds
             all_lats = []
@@ -3201,7 +4453,8 @@ elif st.session_state.current_step == 8:
                         fill=True,
                         fill_color=fill_color,
                         fill_opacity=0.5,
-                        weight=2
+                        weight=2,
+                        draggable=False  # Disable dragging by default
                     ).add_to(m)
                     plots_added += 1
                     
@@ -3234,10 +4487,143 @@ elif st.session_state.current_step == 8:
                     st.warning(f"Could not fit bounds: {e}")
             
             # Display the map
-            st_folium(m, width=1400, height=700, returned_objects=[])
+            map_data = st_folium(m, width=1400, height=700, returned_objects=[])
+            
+            # Pass plot data to JavaScript
+            plots_data_json = json.dumps([
+                {
+                    'plot_id': p.get('plot_id', ''),
+                    'plot_number': p.get('plot_number', 0),
+                    'corners': {
+                        corner: {
+                            'lat': p['corners'][corner].get('lat', 0),
+                            'lon': p['corners'][corner].get('lon', 0)
+                        }
+                        for corner in ['A', 'B', 'C', 'D']
+                    }
+                }
+                for p in st.session_state.geo_plots
+            ])
+            
+            # Add script to pass plot data and move mode state to JavaScript - MUST be before map script
+            move_mode_enabled = st.session_state.get('move_plots_enabled', False)
+            st.markdown(f"""
+            <script id="move-mode-state-script">
+                // Store plots data for JavaScript access
+                window.plotsDataForMove = {plots_data_json};
+                
+                // Set move mode state and convert to proper boolean
+                window.movePlotsEnabled = {str(move_mode_enabled).lower()};
+                if (window.movePlotsEnabled === 'true') window.movePlotsEnabled = true;
+                if (window.movePlotsEnabled === 'false') window.movePlotsEnabled = false;
+                
+                console.log('✅ Move mode state script: Set to', window.movePlotsEnabled, 'Type:', typeof window.movePlotsEnabled);
+                
+                // Trigger handler update if map is already initialized
+                if (window.leafletMapReady && typeof window.setupMovePlotsClickHandler === 'function') {{
+                    console.log('🔄 Map already ready, updating click handler immediately');
+                    window.setupMovePlotsClickHandler();
+                }}
+                
+                // Also trigger update after delays to ensure it runs
+                setTimeout(function() {{
+                    if (window.leafletMapReady && typeof window.setupMovePlotsClickHandler === 'function') {{
+                        console.log('🔄 Delayed update (100ms): updating click handler');
+                        window.setupMovePlotsClickHandler();
+                    }}
+                }}, 100);
+                
+                setTimeout(function() {{
+                    if (window.leafletMapReady && typeof window.setupMovePlotsClickHandler === 'function') {{
+                        console.log('🔄 Delayed update (500ms): updating click handler');
+                        window.setupMovePlotsClickHandler();
+                    }}
+                }}, 500);
+            </script>
+            """, unsafe_allow_html=True)
         
         # Add custom controls for scale, move, and rotate - positioned below map
+        # Pass move mode state as data attribute
+        move_mode_enabled = st.session_state.get('move_plots_enabled', False)
         st.components.v1.html("""
+        <!-- Simple Confirmation Dialog -->
+        <div id="move-plots-dialog-overlay" style="
+            display: none;
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0, 0, 0, 0.4);
+            z-index: 10000;
+        ">
+            <div id="move-plots-dialog" style="
+                background: white;
+                padding: 25px;
+                border-radius: 10px;
+                box-shadow: 0 4px 20px rgba(0,0,0,0.3);
+                max-width: 400px;
+                width: 90%;
+                animation: slideIn 0.2s ease-out;
+                text-align: center;
+            ">
+                <div style="font-size: 48px; margin-bottom: 15px;">📍</div>
+                <h3 style="margin: 0 0 10px 0; color: #333; font-size: 20px;">Move Plot Layout?</h3>
+                <p style="color: #666; margin: 0 0 20px 0; font-size: 14px; line-height: 1.5;">
+                    Do you want to move all plots to this position?<br>
+                    <strong id="clicked-lat-lng" style="color: #4CAF50; font-size: 13px;"></strong>
+                </p>
+                <div style="display: flex; gap: 10px; margin-top: 20px;">
+                    <button id="move-dialog-confirm" style="
+                        flex: 1;
+                        padding: 12px;
+                        background: #4CAF50;
+                        color: white;
+                        border: none;
+                        border-radius: 6px;
+                        font-size: 15px;
+                        font-weight: 600;
+                        cursor: pointer;
+                        transition: background 0.2s;
+                    " onmouseover="this.style.background='#45a049'" onmouseout="this.style.background='#4CAF50'">✅ Yes, Move</button>
+                    <button id="move-dialog-cancel" style="
+                        flex: 1;
+                        padding: 12px;
+                        background: #f5f5f5;
+                        color: #666;
+                        border: 1px solid #ddd;
+                        border-radius: 6px;
+                        font-size: 15px;
+                        font-weight: 600;
+                        cursor: pointer;
+                        transition: background 0.2s;
+                    " onmouseover="this.style.background='#e0e0e0'" onmouseout="this.style.background='#f5f5f5'">❌ Cancel</button>
+                </div>
+            </div>
+        </div>
+        <style>
+            @keyframes slideIn {
+                from {
+                    opacity: 0;
+                    transform: translateY(-10px);
+                }
+                to {
+                    opacity: 1;
+                    transform: translateY(0);
+                }
+            }
+            @keyframes slideInRight {
+                from {
+                    opacity: 0;
+                    transform: translateX(100px);
+                }
+                to {
+                    opacity: 1;
+                    transform: translateX(0);
+                }
+            }
+        </style>
+        
         <div id="map-controls-panel" style="
             background: rgba(255, 255, 255, 0.98);
             padding: 20px 25px;
@@ -3263,6 +4649,10 @@ elif st.session_state.current_step == 8:
                     width: 40px; height: 40px; border-radius: 50%; border: none;
                     background: #6366f1; color: white; font-size: 18px; cursor: pointer;
                 ">-</button>
+                <input type="number" id="map-scale-input" value="1.0" step="0.1" min="0.1" max="5.0" placeholder="Scale" style="
+                    width: 80px; height: 35px; border: 1px solid #ccc; border-radius: 4px;
+                    padding: 5px; text-align: center; font-size: 13px; margin-left: 5px;
+                ">
             </div>
             <div style="display: flex; align-items: center; gap: 10px;">
                 <span style="font-weight: bold; color: #333; margin-right: 5px;">Move</span>
@@ -3289,6 +4679,14 @@ elif st.session_state.current_step == 8:
                     ">▼</button>
                     <div></div>
                 </div>
+                <input type="number" id="map-move-x-input" value="0" step="1" placeholder="X px" style="
+                    width: 70px; height: 35px; border: 1px solid #ccc; border-radius: 4px;
+                    padding: 5px; text-align: center; font-size: 13px; margin-left: 5px;
+                ">
+                <input type="number" id="map-move-y-input" value="0" step="1" placeholder="Y px" style="
+                    width: 70px; height: 35px; border: 1px solid #ccc; border-radius: 4px;
+                    padding: 5px; text-align: center; font-size: 13px;
+                ">
             </div>
             <div style="display: flex; align-items: center; gap: 10px;">
                 <span style="font-weight: bold; color: #333; margin-right: 5px;">Rotate</span>
@@ -3300,10 +4698,34 @@ elif st.session_state.current_step == 8:
         </div>
         <script>
             (function() {
+                // Set plots data immediately from Python
+                window.plotsDataForMove = """ + plots_data_json + """;
+                console.log('📊 Plots data set:', window.plotsDataForMove ? window.plotsDataForMove.length + ' plots' : 'null/undefined');
+                
+                // Set move mode state immediately from Python - convert to proper boolean
+                window.movePlotsEnabled = """ + str(move_mode_enabled).lower() + """;
+                // Ensure it's a proper boolean
+                if (window.movePlotsEnabled === 'true') window.movePlotsEnabled = true;
+                if (window.movePlotsEnabled === 'false') window.movePlotsEnabled = false;
+                console.log('🎯 Map script: Move mode state initialized to:', window.movePlotsEnabled, 'Type:', typeof window.movePlotsEnabled);
+                
                 let leafletMap = null;
                 let mapIframe = null;
+                let mapIframeWindow = null; // Store iframe window to access Leaflet
+                let Leaflet = null; // Store Leaflet instance from iframe
+                let plotPolygons = [];
                 let retryCount = 0;
                 const maxRetries = 30;
+                
+                // Move plots state
+                let clickedPosition = null;
+                let mapClickHandler = null;
+                
+                // Transform state for plots
+                let plotScale = 1.0;
+                let plotOffsetLat = 0; // Offset in degrees latitude
+                let plotOffsetLng = 0; // Offset in degrees longitude
+                let plotRotation = 0;
                 
                 // Function to find and initialize the Leaflet map
                 function findAndInitMap() {
@@ -3333,6 +4755,10 @@ elif st.session_state.current_step == 8:
                             
                             // Check if Leaflet is available in iframe
                             if (iframeWindow.L && iframeWindow.L.Map) {
+                                // Store references to iframe window and Leaflet
+                                mapIframeWindow = iframeWindow;
+                                Leaflet = iframeWindow.L;
+                                
                                 // Method 1: Try to get from _instances
                                 if (iframeWindow.L.map && iframeWindow.L.map._instances) {
                                     const instances = Object.values(iframeWindow.L.map._instances);
@@ -3378,165 +4804,1038 @@ elif st.session_state.current_step == 8:
                     setTimeout(findAndInitMap, 500);
                 }
                 
+                // Function to get all plot polygons from the map
+                function getPlotPolygons() {
+                    if (!leafletMap || !Leaflet) return [];
+                    
+                    const polygons = [];
+                    leafletMap.eachLayer(function(layer) {
+                        if (layer instanceof Leaflet.Polygon) {
+                            // Store original coordinates if not already stored
+                            if (!layer.originalLatLngs) {
+                                const latLngs = layer.getLatLngs()[0];
+                                layer.originalLatLngs = latLngs.map(function(ll) {
+                                    return [ll.lat, ll.lng];
+                                });
+                            }
+                            polygons.push(layer);
+                        }
+                    });
+                    return polygons;
+                }
+                
+                // Function to reset transformations
+                function resetPlotTransform() {
+                    plotScale = 1.0;
+                    plotOffsetLat = 0;
+                    plotOffsetLng = 0;
+                    plotRotation = 0;
+                    
+                    // Reset all polygons to original coordinates
+                    if (!leafletMap || !Leaflet) return;
+                    const polygons = getPlotPolygons();
+                    polygons.forEach(function(polygon) {
+                        if (polygon.originalLatLngs) {
+                            const latLngs = polygon.originalLatLngs.map(function(ll) {
+                                return Leaflet.latLng(ll[0], ll[1]);
+                            });
+                            polygon.setLatLngs([latLngs]);
+                        }
+                    });
+                    leafletMap.invalidateSize();
+                }
+                
+                // Function to calculate centroid of all plots
+                function getPlotsCentroid(polygons) {
+                    if (polygons.length === 0) return null;
+                    
+                    let totalLat = 0;
+                    let totalLng = 0;
+                    let pointCount = 0;
+                    
+                    polygons.forEach(function(polygon) {
+                        const latLngs = polygon.originalLatLngs || polygon.getLatLngs()[0];
+                        latLngs.forEach(function(ll) {
+                            const lat = Array.isArray(ll) ? ll[0] : ll.lat;
+                            const lng = Array.isArray(ll) ? ll[1] : ll.lng;
+                            totalLat += lat;
+                            totalLng += lng;
+                            pointCount++;
+                        });
+                    });
+                    
+                    return {
+                        lat: totalLat / pointCount,
+                        lng: totalLng / pointCount
+                    };
+                }
+                
+                // Function to apply transformations to plot polygons
+                function applyPlotTransform() {
+                    if (!leafletMap || !Leaflet) return;
+                    
+                    const polygons = getPlotPolygons();
+                    if (polygons.length === 0) {
+                        console.log('No plot polygons found');
+                        return;
+                    }
+                    
+                    const centroid = getPlotsCentroid(polygons);
+                    if (!centroid) return;
+                    
+                    polygons.forEach(function(polygon) {
+                        const originalLatLngs = polygon.originalLatLngs || polygon.getLatLngs()[0];
+                        const transformedLatLngs = originalLatLngs.map(function(ll) {
+                            let lat = Array.isArray(ll) ? ll[0] : ll.lat;
+                            let lng = Array.isArray(ll) ? ll[1] : ll.lng;
+                            
+                            // Translate to origin (centroid)
+                            let x = lng - centroid.lng;
+                            let y = lat - centroid.lat;
+                            
+                            // Apply rotation
+                            if (plotRotation !== 0) {
+                                const angleRad = (plotRotation * Math.PI) / 180;
+                                const cos = Math.cos(angleRad);
+                                const sin = Math.sin(angleRad);
+                                const newX = x * cos - y * sin;
+                                const newY = x * sin + y * cos;
+                                x = newX;
+                                y = newY;
+                            }
+                            
+                            // Apply scale
+                            x *= plotScale;
+                            y *= plotScale;
+                            
+                            // Translate back and apply offset
+                            lng = centroid.lng + x + plotOffsetLng;
+                            lat = centroid.lat + y + plotOffsetLat;
+                            
+                            return Leaflet.latLng(lat, lng);
+                        });
+                        
+                        polygon.setLatLngs([transformedLatLngs]);
+                    });
+                    
+                    leafletMap.invalidateSize();
+                }
+                
                 function initMapControls() {
-                    if (!leafletMap) {
-                        console.log('Map not found, retrying...');
+                    if (!leafletMap || !Leaflet) {
+                        console.log('Map or Leaflet not found, retrying...');
                         setTimeout(findAndInitMap, 500);
                         return;
                     }
                     
-                    console.log('Initializing map controls...');
+                    console.log('Initializing plot transform controls...');
                     
+                    // Wait a bit for polygons to load, then initialize
+                    setTimeout(function() {
+                        // Initialize plot polygons and store original coordinates
+                        plotPolygons = getPlotPolygons();
+                        console.log('Found', plotPolygons.length, 'plot polygons');
+                        
+                        // Store original coordinates and disable dragging by default for all polygons
+                        plotPolygons.forEach(function(polygon) {
+                            if (!polygon.originalLatLngs) {
+                                const latLngs = polygon.getLatLngs()[0];
+                                polygon.originalLatLngs = latLngs.map(function(ll) {
+                                    return [ll.lat, ll.lng];
+                                });
+                            }
+                            
+                            // Disable dragging by default (will be enabled only when move mode is on)
+                            if (polygon.dragging) {
+                                polygon.dragging.disable();
+                            }
+                            polygon.options.draggable = false;
+                        });
+                        
+                        console.log('Disabled dragging for all polygons by default');
+                        
+                        // Connect controls after polygons are ready
+                        connectControls();
+                        
+                        // Setup move plots click handler
+                        setupMovePlotsClickHandler();
+                        
+                        // Mark map as ready and expose handler function globally
+                        window.leafletMapReady = true;
+                        window.setupMovePlotsClickHandler = setupMovePlotsClickHandler;
+                    }, 500);
+                }
+                
+                function connectControls() {
                     // Buttons are in the same document as this script
                     const scaleUpBtn = document.getElementById('map-scale-up');
                     const scaleDownBtn = document.getElementById('map-scale-down');
+                    const scaleInput = document.getElementById('map-scale-input');
+                    
+                    // Scale input handler
+                    if (scaleInput) {
+                        scaleInput.onchange = function() {
+                            const scaleValue = parseFloat(this.value) || 1.0;
+                            if (scaleValue >= 0.1 && scaleValue <= 5.0) {
+                                plotScale = scaleValue;
+                                applyPlotTransform();
+                            } else {
+                                this.value = plotScale.toFixed(2);
+                            }
+                        };
+                        // Update input when scale changes
+                        scaleInput.value = plotScale.toFixed(2);
+                    }
                     
                     if (scaleUpBtn) {
                         scaleUpBtn.onclick = function(e) {
                             e.preventDefault();
                             e.stopPropagation();
-                            console.log('Map scale up clicked!');
-                            try {
-                                if (leafletMap && leafletMap.getZoom) {
-                                    const currentZoom = leafletMap.getZoom();
-                                    leafletMap.setZoom(Math.min(leafletMap.getMaxZoom(), currentZoom + 1));
-                                    console.log('Map zoomed in to:', leafletMap.getZoom());
-                                }
-                            } catch(err) {
-                                console.error('Error zooming in:', err);
-                            }
+                            console.log('Plot scale up clicked!');
+                            plotScale *= 1.1;
+                            if (scaleInput) scaleInput.value = plotScale.toFixed(2);
+                            applyPlotTransform();
                             return false;
                         };
-                        console.log('Map scale up button connected');
+                        console.log('Plot scale up button connected');
                     }
                     
                     if (scaleDownBtn) {
                         scaleDownBtn.onclick = function(e) {
                             e.preventDefault();
                             e.stopPropagation();
-                            console.log('Map scale down clicked!');
-                            try {
-                                if (leafletMap && leafletMap.getZoom) {
-                                    const currentZoom = leafletMap.getZoom();
-                                    leafletMap.setZoom(Math.max(leafletMap.getMinZoom(), currentZoom - 1));
-                                    console.log('Map zoomed out to:', leafletMap.getZoom());
-                                }
-                            } catch(err) {
-                                console.error('Error zooming out:', err);
-                            }
+                            console.log('Plot scale down clicked!');
+                            plotScale /= 1.1;
+                            if (scaleInput) scaleInput.value = plotScale.toFixed(2);
+                            applyPlotTransform();
                             return false;
                         };
-                        console.log('Map scale down button connected');
+                        console.log('Plot scale down button connected');
                     }
                     
-                    // Move controls
+                    // Move controls - move plots, not map
                     const moveUpBtn = document.getElementById('map-move-up');
                     const moveDownBtn = document.getElementById('map-move-down');
                     const moveLeftBtn = document.getElementById('map-move-left');
                     const moveRightBtn = document.getElementById('map-move-right');
+                    const moveXInput = document.getElementById('map-move-x-input');
+                    const moveYInput = document.getElementById('map-move-y-input');
+                    
+                    // Move input handlers (convert pixels to lat/lng approximately)
+                    // Rough conversion: 1 pixel ≈ 0.0001 degrees at typical zoom levels
+                    if (moveXInput) {
+                        moveXInput.onchange = function() {
+                            const pixelValue = parseFloat(this.value) || 0;
+                            // Convert pixels to degrees (approximate)
+                            plotOffsetLng = pixelValue * 0.0001;
+                            applyPlotTransform();
+                        };
+                        // Initialize with current value
+                        moveXInput.value = Math.round(plotOffsetLng / 0.0001);
+                    }
+                    
+                    if (moveYInput) {
+                        moveYInput.onchange = function() {
+                            const pixelValue = parseFloat(this.value) || 0;
+                            // Convert pixels to degrees (approximate, negative for Y)
+                            plotOffsetLat = -pixelValue * 0.0001;
+                            applyPlotTransform();
+                        };
+                        // Initialize with current value
+                        moveYInput.value = Math.round(-plotOffsetLat / 0.0001);
+                    }
                     
                     if (moveUpBtn) {
                         moveUpBtn.onclick = function(e) {
                             e.preventDefault();
                             e.stopPropagation();
-                            console.log('Map move up clicked!');
-                            try {
-                                if (leafletMap && leafletMap.panBy) {
-                                    leafletMap.panBy([0, -50]);
-                                }
-                            } catch(err) {
-                                console.error('Error moving up:', err);
-                            }
+                            console.log('Plot move up clicked!');
+                            plotOffsetLat += 0.0001; // Move north (increase latitude)
+                            if (moveYInput) moveYInput.value = Math.round(-plotOffsetLat / 0.0001);
+                            applyPlotTransform();
                             return false;
                         };
-                        console.log('Map move up button connected');
+                        console.log('Plot move up button connected');
                     }
                     
                     if (moveDownBtn) {
                         moveDownBtn.onclick = function(e) {
                             e.preventDefault();
                             e.stopPropagation();
-                            console.log('Map move down clicked!');
-                            try {
-                                if (leafletMap && leafletMap.panBy) {
-                                    leafletMap.panBy([0, 50]);
-                                }
-                            } catch(err) {
-                                console.error('Error moving down:', err);
-                            }
+                            console.log('Plot move down clicked!');
+                            plotOffsetLat -= 0.0001; // Move south (decrease latitude)
+                            if (moveYInput) moveYInput.value = Math.round(-plotOffsetLat / 0.0001);
+                            applyPlotTransform();
                             return false;
                         };
-                        console.log('Map move down button connected');
+                        console.log('Plot move down button connected');
                     }
                     
                     if (moveLeftBtn) {
                         moveLeftBtn.onclick = function(e) {
                             e.preventDefault();
                             e.stopPropagation();
-                            console.log('Map move left clicked!');
-                            try {
-                                if (leafletMap && leafletMap.panBy) {
-                                    leafletMap.panBy([-50, 0]);
-                                }
-                            } catch(err) {
-                                console.error('Error moving left:', err);
-                            }
+                            console.log('Plot move left clicked!');
+                            plotOffsetLng -= 0.0001; // Move west (decrease longitude)
+                            if (moveXInput) moveXInput.value = Math.round(plotOffsetLng / 0.0001);
+                            applyPlotTransform();
                             return false;
                         };
-                        console.log('Map move left button connected');
+                        console.log('Plot move left button connected');
                     }
                     
                     if (moveRightBtn) {
                         moveRightBtn.onclick = function(e) {
                             e.preventDefault();
                             e.stopPropagation();
-                            console.log('Map move right clicked!');
-                            try {
-                                if (leafletMap && leafletMap.panBy) {
-                                    leafletMap.panBy([50, 0]);
-                                }
-                            } catch(err) {
-                                console.error('Error moving right:', err);
-                            }
+                            console.log('Plot move right clicked!');
+                            plotOffsetLng += 0.0001; // Move east (increase longitude)
+                            if (moveXInput) moveXInput.value = Math.round(plotOffsetLng / 0.0001);
+                            applyPlotTransform();
                             return false;
                         };
-                        console.log('Map move right button connected');
+                        console.log('Plot move right button connected');
                     }
                     
-                    // Rotate control (Leaflet doesn't natively support rotation)
+                    
+                    // Rotate control - rotate plots
                     const rotateInput = document.getElementById('map-rotate-input');
                     if (rotateInput) {
-                        rotateInput.disabled = true;
-                        rotateInput.style.backgroundColor = '#f0f0f0';
-                        rotateInput.style.cursor = 'not-allowed';
-                        rotateInput.title = 'Map rotation is not supported by Leaflet';
+                        rotateInput.disabled = false;
+                        rotateInput.style.backgroundColor = '#ffffff';
+                        rotateInput.style.cursor = 'text';
+                        rotateInput.title = 'Rotate plots (degrees)';
                         rotateInput.onchange = function() {
-                            const rotation = parseFloat(this.value) || 0;
-                            console.log('Rotation requested:', rotation, 'but not supported by Leaflet maps');
+                            plotRotation = parseFloat(this.value) || 0;
+                            applyPlotTransform();
                         };
+                        console.log('Plot rotate input connected');
                     }
                     
-                    console.log('Map controls initialized!');
+                    console.log('Plot transform controls initialized!');
+                }
+                
+                // Function to setup map click handler for move plots
+                function setupMovePlotsClickHandler() {
+                    if (!leafletMap || !Leaflet) {
+                        console.log('Cannot setup move click handler: map or Leaflet not ready');
+                        return;
+                    }
+                    
+                    // Remove existing handler if any
+                    if (mapClickHandler) {
+                        leafletMap.off('click', mapClickHandler);
+                        mapClickHandler = null;
+                        console.log('Removed existing click handler');
+                    }
+                    
+                    // Check if move mode is enabled - check multiple ways and normalize
+                    let moveModeValue = window.movePlotsEnabled;
+                    
+                    // Normalize to boolean
+                    if (moveModeValue === 'true' || moveModeValue === true) {
+                        moveModeValue = true;
+                    } else if (moveModeValue === 'false' || moveModeValue === false || moveModeValue === null || moveModeValue === undefined) {
+                        moveModeValue = false;
+                    } else {
+                        moveModeValue = !!moveModeValue; // Convert to boolean
+                    }
+                    
+                    const moveModeEnabled = moveModeValue === true;
+                    
+                    console.log('Move mode check:', {
+                        windowValue: window.movePlotsEnabled,
+                        normalizedValue: moveModeValue,
+                        type: typeof window.movePlotsEnabled,
+                        enabled: moveModeEnabled
+                    });
+                    
+                    // Get all polygons and set their draggable state
+                    const polygons = getPlotPolygons();
+                    polygons.forEach(function(polygon) {
+                        if (moveModeEnabled) {
+                            // Enable dragging for polygons
+                            if (polygon.dragging) {
+                                polygon.dragging.enable();
+                            }
+                            polygon.options.draggable = true;
+                            console.log('Enabled dragging for polygon');
+                        } else {
+                            // Disable dragging for polygons
+                            if (polygon.dragging) {
+                                polygon.dragging.disable();
+                            }
+                            polygon.options.draggable = false;
+                            console.log('Disabled dragging for polygon');
+                        }
+                    });
+                    
+                    if (moveModeEnabled) {
+                        // Remove any existing handlers first
+                        if (mapClickHandler) {
+                            leafletMap.off('click', mapClickHandler);
+                        }
+                        
+                        // Enable click handler for moving plots
+                        mapClickHandler = function(e) {
+                            // Check current move mode state dynamically
+                            let currentMoveMode = window.movePlotsEnabled;
+                            if (currentMoveMode === 'true' || currentMoveMode === true) {
+                                currentMoveMode = true;
+                            } else {
+                                currentMoveMode = false;
+                            }
+                            
+                            if (!currentMoveMode) {
+                                console.log('Map click ignored - move mode is disabled');
+                                return true; // Allow normal map behavior
+                            }
+                            
+                            console.log('🔵🔵🔵 CLICK HANDLER TRIGGERED!', e);
+                            console.log('Event details:', {
+                                type: e.type,
+                                latlng: e.latlng,
+                                originalEvent: e.originalEvent
+                            });
+                            
+                            // Prevent default map behavior
+                            if (e.originalEvent) {
+                                e.originalEvent.preventDefault();
+                                e.originalEvent.stopPropagation();
+                            }
+                            
+                            if (e && e.latlng) {
+                                clickedPosition = {
+                                    lat: e.latlng.lat,
+                                    lng: e.latlng.lng
+                                };
+                                
+                                console.log('✅ Map clicked at:', clickedPosition);
+                                
+                                // Show confirmation dialog
+                                try {
+                                    console.log('Calling showMovePlotsDialog...');
+                                    showMovePlotsDialog(clickedPosition);
+                                    console.log('showMovePlotsDialog called successfully');
+                                } catch(err) {
+                                    console.error('❌ Error showing dialog:', err);
+                                    console.error('Error stack:', err.stack);
+                                    alert('Error showing dialog: ' + err.message);
+                                }
+                            } else {
+                                console.error('❌ Invalid click event - no latlng:', e);
+                            }
+                            
+                            return false;
+                        };
+                        
+                        // Add click handler with high priority
+                        leafletMap.on('click', mapClickHandler);
+                        
+                        // Verify handler was added
+                        const hasClickHandler = leafletMap.listens('click');
+                        console.log('Leaflet click handler registered:', hasClickHandler);
+                        
+                        // Also add to map container directly as backup (without cloning)
+                        const mapContainer = leafletMap.getContainer();
+                        if (mapContainer) {
+                            // Remove old listener if exists
+                            if (mapContainer._movePlotsClickHandler) {
+                                mapContainer.removeEventListener('click', mapContainer._movePlotsClickHandler, true);
+                            }
+                            
+                            // Create new handler that checks current move mode state dynamically
+                            mapContainer._movePlotsClickHandler = function(domEvent) {
+                                // Check current move mode state (not the captured variable)
+                                let currentMoveMode = window.movePlotsEnabled;
+                                if (currentMoveMode === 'true' || currentMoveMode === true) {
+                                    currentMoveMode = true;
+                                } else {
+                                    currentMoveMode = false;
+                                }
+                                
+                                if (currentMoveMode) {
+                                    console.log('🔵🔵🔵 DIRECT CONTAINER CLICK DETECTED!', domEvent);
+                                    // Get lat/lng from Leaflet
+                                    try {
+                                        const point = leafletMap.mouseEventToLatLng(domEvent);
+                                        console.log('Point from mouseEventToLatLng:', point);
+                                        if (point) {
+                                            clickedPosition = {
+                                                lat: point.lat,
+                                                lng: point.lng
+                                            };
+                                            console.log('✅ Container click at:', clickedPosition);
+                                            showMovePlotsDialog(clickedPosition);
+                                            domEvent.preventDefault();
+                                            domEvent.stopPropagation();
+                                            return false;
+                                        }
+                                    } catch(err) {
+                                        console.error('Error getting lat/lng from click:', err);
+                                    }
+                                } else {
+                                    console.log('Container click ignored - move mode is disabled');
+                                }
+                            };
+                            
+                            // Add listener with capture phase
+                            mapContainer.addEventListener('click', mapContainer._movePlotsClickHandler, true);
+                            console.log('✅ Direct container click listener added');
+                            
+                            mapContainer.style.cursor = 'crosshair';
+                            console.log('Cursor set to crosshair');
+                        } else {
+                            console.error('❌ Map container not found!');
+                        }
+                        
+                        console.log('✅ Move plots click handler ENABLED - ready to receive clicks');
+                        console.log('Handler function:', mapClickHandler);
+                        
+                        // Test: Try to manually trigger to verify dialog works
+                        console.log('Testing dialog availability...');
+                        try {
+                            const testOverlay = document.getElementById('move-plots-dialog-overlay');
+                            const parentOverlay = window.parent ? window.parent.document.getElementById('move-plots-dialog-overlay') : null;
+                            console.log('Dialog overlay exists (current):', !!testOverlay);
+                            console.log('Dialog overlay exists (parent):', !!parentOverlay);
+                            
+                            // Test if we can trigger a simple click test
+                            if (mapContainer) {
+                                console.log('Adding test click listener to verify clicks work...');
+                                mapContainer.addEventListener('click', function testClick(e) {
+                                    console.log('🧪 TEST CLICK DETECTED on container!', e);
+                                }, {once: true, capture: true});
+                            }
+                        } catch(err) {
+                            console.error('Error checking dialog:', err);
+                        }
+                    } else {
+                        // Disable click handler - remove all handlers when move mode is disabled
+                        console.log('Move mode is disabled - removing all click handlers');
+                        
+                        // Remove Leaflet map click handler
+                        if (mapClickHandler) {
+                            leafletMap.off('click', mapClickHandler);
+                            mapClickHandler = null;
+                            console.log('Removed Leaflet map click handler');
+                        }
+                        
+                        // Remove container click handler
+                        const mapContainer = leafletMap.getContainer();
+                        if (mapContainer && mapContainer._movePlotsClickHandler) {
+                            mapContainer.removeEventListener('click', mapContainer._movePlotsClickHandler, true);
+                            mapContainer._movePlotsClickHandler = null;
+                            console.log('Removed container click handler');
+                        }
+                        
+                        // Reset cursor
+                        if (mapContainer) {
+                            mapContainer.style.cursor = '';
+                            console.log('Reset cursor to default');
+                        }
+                        
+                        console.log('✅ Move plots click handler DISABLED - all handlers removed');
+                    }
+                }
+                
+                // Function to create dialog fallback if not found
+                function createMoveDialogFallback(doc, position) {
+                    console.log('Creating fallback dialog...');
+                    
+                    // Create overlay
+                    const overlay = doc.createElement('div');
+                    overlay.id = 'move-plots-dialog-overlay-fallback';
+                    overlay.style.cssText = 'display: flex; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.4); z-index: 10000; justify-content: center; align-items: center;';
+                    
+                    // Create dialog
+                    const dialog = doc.createElement('div');
+                    dialog.style.cssText = 'background: white; padding: 25px; border-radius: 10px; box-shadow: 0 4px 20px rgba(0,0,0,0.3); max-width: 400px; width: 90%; text-align: center;';
+                    
+                    dialog.innerHTML = `
+                        <div style="font-size: 48px; margin-bottom: 15px;">📍</div>
+                        <h3 style="margin: 0 0 10px 0; color: #333; font-size: 20px;">Move Plot Layout?</h3>
+                        <p style="color: #666; margin: 0 0 20px 0; font-size: 14px;">
+                            Do you want to move all plots to this position?<br>
+                            <strong style="color: #4CAF50;">${position.lat.toFixed(6)}, ${position.lng.toFixed(6)}</strong>
+                        </p>
+                        <div style="display: flex; gap: 10px; margin-top: 20px;">
+                            <button id="fallback-confirm" style="flex: 1; padding: 12px; background: #4CAF50; color: white; border: none; border-radius: 6px; font-size: 15px; font-weight: 600; cursor: pointer;">✅ Yes, Move</button>
+                            <button id="fallback-cancel" style="flex: 1; padding: 12px; background: #f5f5f5; color: #666; border: 1px solid #ddd; border-radius: 6px; font-size: 15px; font-weight: 600; cursor: pointer;">❌ Cancel</button>
+                        </div>
+                    `;
+                    
+                    overlay.appendChild(dialog);
+                    doc.body.appendChild(overlay);
+                    
+                    // Setup buttons
+                    const confirmBtn = dialog.querySelector('#fallback-confirm');
+                    const cancelBtn = dialog.querySelector('#fallback-cancel');
+                    
+                    confirmBtn.onclick = function() {
+                        if (applyPlotMove(position)) {
+                            overlay.remove();
+                            showMoveNotification('✅ All plots moved! Updating coordinates...');
+                            sendCoordinateUpdateToStreamlit(position);
+                        }
+                    };
+                    
+                    cancelBtn.onclick = function() {
+                        overlay.remove();
+                    };
+                    
+                    overlay.onclick = function(e) {
+                        if (e.target === overlay) {
+                            overlay.remove();
+                        }
+                    };
+                    
+                    console.log('✅ Fallback dialog created and shown');
+                }
+                
+                // Function to show move plots confirmation dialog - using native JavaScript confirm
+                function showMovePlotsDialog(position) {
+                    console.log('🔵🔵🔵 showMovePlotsDialog CALLED with position:', position);
+                    
+                    // Check if plots data is available
+                    let plotsData = window.plotsDataForMove;
+                    if (!plotsData || (Array.isArray(plotsData) && plotsData.length === 0)) {
+                        console.warn('⚠️ Plots data not available when dialog opened');
+                        // Try to get from parent
+                        try {
+                            if (window.parent && window.parent.plotsDataForMove) {
+                                plotsData = window.parent.plotsDataForMove;
+                                window.plotsDataForMove = plotsData;
+                                console.log('✅ Got plots data from parent window');
+                            }
+                        } catch(e) {
+                            console.error('Cannot access parent:', e);
+                        }
+                    }
+                    
+                    if (!plotsData || (Array.isArray(plotsData) && plotsData.length === 0)) {
+                        alert('⚠️ Plots data not available. Please ensure you are on Step 8 (Google Map Preview) with plots loaded. Refresh the page if needed.');
+                        return;
+                    }
+                    
+                    // Use native JavaScript confirm dialog - always centered and visible
+                    const message = `📍 Move Plot Layout?\n\nDo you want to move all plots to this position?\n\nCoordinates: ${position.lat.toFixed(6)}, ${position.lng.toFixed(6)}`;
+                    
+                    const userConfirmed = confirm(message);
+                    
+                    if (userConfirmed) {
+                        console.log('User confirmed plot move');
+                        if (applyPlotMove(position)) {
+                            console.log('Plot move applied successfully, sending coordinates to Streamlit...');
+                            // Show notification
+                            showMoveNotification('✅ All plots moved! Updating coordinates...');
+                            // Send update to Streamlit
+                            sendCoordinateUpdateToStreamlit(position);
+                        } else {
+                            console.error('Failed to apply plot move');
+                        }
+                    } else {
+                        console.log('User cancelled plot move');
+                    }
+                }
+                
+                // Function to apply plot move transformation - moves all plots so their centroid aligns with target
+                function applyPlotMove(targetPosition) {
+                    if (!leafletMap || !Leaflet) {
+                        console.error('Cannot apply plot move: missing dependencies');
+                        alert('Map not ready. Please wait a moment and try again.');
+                        return false;
+                    }
+                    
+                    // Check for plots data in multiple ways
+                    let plotsData = window.plotsDataForMove;
+                    
+                    // Try to get from parent window if not available
+                    if (!plotsData || plotsData.length === 0) {
+                        try {
+                            if (window.parent && window.parent.plotsDataForMove) {
+                                plotsData = window.parent.plotsDataForMove;
+                                window.plotsDataForMove = plotsData; // Sync to current window
+                            }
+                        } catch(e) {
+                            console.log('Cannot access parent window:', e);
+                        }
+                    }
+                    
+                    // Check if it's an array or needs parsing
+                    if (typeof plotsData === 'string') {
+                        try {
+                            plotsData = JSON.parse(plotsData);
+                        } catch(e) {
+                            console.error('Failed to parse plots data:', e);
+                        }
+                    }
+                    
+                    plotsData = plotsData || [];
+                    
+                    console.log('Plots data check:', {
+                        available: !!plotsData,
+                        length: plotsData.length,
+                        type: typeof plotsData,
+                        isArray: Array.isArray(plotsData)
+                    });
+                    
+                    if (!plotsData || plotsData.length === 0) {
+                        console.error('No plots data available. Available window properties:', Object.keys(window).filter(k => k.includes('plot')));
+                        alert('No plots data available. Please ensure plots are loaded on the map. If the issue persists, refresh the page.');
+                        return false;
+                    }
+                    
+                    // Calculate current centroid of all plots
+                    let totalLat = 0;
+                    let totalLng = 0;
+                    let pointCount = 0;
+                    
+                    plotsData.forEach(function(plot) {
+                        for (let corner in plot.corners) {
+                            totalLat += plot.corners[corner].lat;
+                            totalLng += plot.corners[corner].lon;
+                            pointCount++;
+                        }
+                    });
+                    
+                    if (pointCount === 0) {
+                        alert('No plot coordinates found');
+                        return false;
+                    }
+                    
+                    const currentCentroidLat = totalLat / pointCount;
+                    const currentCentroidLng = totalLng / pointCount;
+                    
+                    // Calculate offset to move centroid to target position
+                    const offsetLat = targetPosition.lat - currentCentroidLat;
+                    const offsetLng = targetPosition.lng - currentCentroidLng;
+                    
+                    console.log('Current centroid:', currentCentroidLat, currentCentroidLng);
+                    console.log('Target position:', targetPosition.lat, targetPosition.lng);
+                    console.log('Applying offset:', offsetLat, offsetLng);
+                    
+                    // Get polygons and apply offset
+                    const polygons = getPlotPolygons();
+                    if (polygons.length === 0) {
+                        alert('No plots found on map');
+                        return false;
+                    }
+                    
+                    // Apply offset to all plots
+                    polygons.forEach(function(polygon) {
+                        if (polygon.originalLatLngs) {
+                            const newLatLngs = polygon.originalLatLngs.map(function(ll) {
+                                const newLat = ll[0] + offsetLat;
+                                const newLng = ll[1] + offsetLng;
+                                return Leaflet.latLng(newLat, newLng);
+                            });
+                            
+                            // Update polygon
+                            polygon.setLatLngs([newLatLngs]);
+                            
+                            // Update original coordinates for future transformations
+                            polygon.originalLatLngs = newLatLngs.map(function(ll) {
+                                return [ll.lat, ll.lng];
+                            });
+                        }
+                    });
+                    
+                    leafletMap.invalidateSize();
+                    return true;
+                }
+                
+                // Function to send coordinate update to Streamlit
+                function sendCoordinateUpdateToStreamlit(targetPosition) {
+                    console.log('sendCoordinateUpdateToStreamlit called with position:', targetPosition);
+                    
+                    // Check for plots data in multiple ways
+                    let plotsData = window.plotsDataForMove;
+                    
+                    // Try to get from parent window if not available
+                    if (!plotsData || plotsData.length === 0) {
+                        try {
+                            if (window.parent && window.parent.plotsDataForMove) {
+                                plotsData = window.parent.plotsDataForMove;
+                                window.plotsDataForMove = plotsData; // Sync to current window
+                            }
+                        } catch(e) {
+                            console.log('Cannot access parent window:', e);
+                        }
+                    }
+                    
+                    // Check if it's an array or needs parsing
+                    if (typeof plotsData === 'string') {
+                        try {
+                            plotsData = JSON.parse(plotsData);
+                        } catch(e) {
+                            console.error('Failed to parse plots data:', e);
+                        }
+                    }
+                    
+                    plotsData = plotsData || [];
+                    
+                    console.log('Plots data for update:', {
+                        available: !!plotsData,
+                        length: plotsData.length,
+                        type: typeof plotsData
+                    });
+                    
+                    if (!plotsData || plotsData.length === 0) {
+                        console.error('No plots data available for coordinate update');
+                        alert('No plots data available. Please refresh the page and try again.');
+                        return;
+                    }
+                    
+                    console.log('Processing', plotsData.length, 'plots');
+                    
+                    // Calculate current centroid from ORIGINAL data (before visual move)
+                    let totalLat = 0;
+                    let totalLng = 0;
+                    let pointCount = 0;
+                    
+                    plotsData.forEach(function(plot) {
+                        for (let corner in plot.corners) {
+                            totalLat += plot.corners[corner].lat;
+                            totalLng += plot.corners[corner].lon;
+                            pointCount++;
+                        }
+                    });
+                    
+                    const currentCentroidLat = totalLat / pointCount;
+                    const currentCentroidLng = totalLng / pointCount;
+                    
+                    const offsetLat = targetPosition.lat - currentCentroidLat;
+                    const offsetLng = targetPosition.lng - currentCentroidLng;
+                    
+                    console.log('Current centroid:', currentCentroidLat, currentCentroidLng);
+                    console.log('Target position:', targetPosition.lat, targetPosition.lng);
+                    console.log('Offset:', offsetLat, offsetLng);
+                    
+                    // Create update data with all plot coordinates
+                    const updatedPlots = plotsData.map(function(plot) {
+                        const updatedCorners = {};
+                        for (let corner in plot.corners) {
+                            updatedCorners[corner] = {
+                                lat: plot.corners[corner].lat + offsetLat,
+                                lon: plot.corners[corner].lon + offsetLng
+                            };
+                        }
+                        return {
+                            plot_id: plot.plot_id,
+                            plot_number: plot.plot_number,
+                            corners: updatedCorners
+                        };
+                    });
+                    
+                    const updateData = {
+                        type: 'plot_coordinates_update',
+                        target_position: targetPosition,
+                        current_centroid: {
+                            lat: currentCentroidLat,
+                            lng: currentCentroidLng
+                        },
+                        offset: {
+                            lat: offsetLat,
+                            lng: offsetLng
+                        },
+                        updated_plots: updatedPlots,
+                        timestamp: Date.now()
+                    };
+                    
+                    console.log('Sending update data:', updateData);
+                    console.log('Updated plots count:', updatedPlots.length);
+                    
+                    // Send to Streamlit via URL parameter
+                    const url = new URL(window.location);
+                    url.searchParams.set('plot_move_update', JSON.stringify(updateData));
+                    url.searchParams.set('_timestamp', Date.now());
+                    console.log('Redirecting to:', url.toString());
+                    window.location.href = url.toString();
+                }
+                
+                // Function to show move notification
+                function showMoveNotification(message) {
+                    // Create or update notification element
+                    let notification = document.getElementById('move-notification');
+                    if (!notification) {
+                        notification = document.createElement('div');
+                        notification.id = 'move-notification';
+                        notification.style.cssText = `
+                            position: fixed;
+                            top: 20px;
+                            right: 20px;
+                            background: #4CAF50;
+                            color: white;
+                            padding: 12px 20px;
+                            border-radius: 6px;
+                            box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+                            z-index: 10001;
+                            font-family: Arial, sans-serif;
+                            font-size: 14px;
+                            font-weight: 500;
+                            animation: slideInRight 0.3s ease-out;
+                        `;
+                        document.body.appendChild(notification);
+                    }
+                    
+                    notification.textContent = message;
+                    notification.style.display = 'block';
+                    
+                    // Auto-hide after 3 seconds
+                    setTimeout(function() {
+                        notification.style.display = 'none';
+                    }, 3000);
+                }
+                
+                // Function to check move mode state and update handler
+                let lastMoveModeState = null;
+                let handlerSetupCount = 0;
+                function checkMoveModeState() {
+                    // Check multiple ways to get the state - also check parent window
+                    let currentState = window.movePlotsEnabled;
+                    
+                    // Try to get from parent window if available
+                    try {
+                        if (window.parent && window.parent.movePlotsEnabled !== undefined) {
+                            currentState = window.parent.movePlotsEnabled;
+                            window.movePlotsEnabled = currentState; // Sync to current window
+                        }
+                    } catch(e) {
+                        // Can't access parent, use current window
+                    }
+                    
+                    const moveModeEnabled = currentState === true || 
+                                          currentState === 'true' || 
+                                          (typeof currentState !== 'undefined' && currentState && currentState !== 'false' && currentState !== false);
+                    
+                    // Only update handler if state actually changed (to avoid constant removal/re-adding)
+                    if (leafletMap && Leaflet) {
+                        if (lastMoveModeState !== moveModeEnabled) {
+                            console.log('🔄 Move mode state changed:', lastMoveModeState, '->', moveModeEnabled, '(raw value:', currentState, 'type:', typeof currentState, ')');
+                            lastMoveModeState = moveModeEnabled;
+                            handlerSetupCount++;
+                            console.log('Setting up handler (count:', handlerSetupCount, ')');
+                            setupMovePlotsClickHandler();
+                        }
+                    } else {
+                        // Log state even if map not ready
+                        if (lastMoveModeState !== moveModeEnabled) {
+                            console.log('Move mode state:', moveModeEnabled, '(raw:', currentState, 'map not ready yet)');
+                            lastMoveModeState = moveModeEnabled;
+                        }
+                    }
                 }
                 
                 // Start searching for the map
                 setTimeout(findAndInitMap, 1000);
+                
+                // Check move mode state more frequently
+                setInterval(checkMoveModeState, 200);
+                
+                // Also check immediately and after delays
+                checkMoveModeState();
+                setTimeout(checkMoveModeState, 500);
+                setTimeout(checkMoveModeState, 1500);
+                setTimeout(checkMoveModeState, 3000);
             })();
         </script>
         """, height=200)
         
         # Navigation buttons for Step 8 (final step)
-        col_btn1, col_btn2, col_btn3 = st.columns([6, 2, 2])
+        col_db, col_btn1, col_btn2, col_btn3 = st.columns([2, 4, 1, 1])
+        with col_db:
+            # Small collapsible expander matching Publish button size
+            with st.expander("Save to DB", expanded=False):
+                profile_name = st.text_input("Profile name", value="default", key="modal_profile_name_step8")
+                
+                def ensure_db():
+                    conn = sqlite3.connect("plot_numbers.db")
+                    conn.execute(
+                        """
+                        CREATE TABLE IF NOT EXISTS profiles (
+                            id INTEGER PRIMARY KEY AUTOINCREMENT,
+                            profile_name TEXT NOT NULL,
+                            plot_id TEXT NOT NULL,
+                            plot_number INTEGER,
+                            created_at TEXT NOT NULL
+                        )
+                        """
+                    )
+                    return conn
+                
+                col1, col2 = st.columns(2)
+                
+                with col1:
+                    if st.button("💾 Save", key="modal_save_step8", use_container_width=True):
+                        if not st.session_state.get('plots'):
+                            st.error("No plots to save.")
+                        else:
+                            conn = ensure_db()
+                            now = datetime.utcnow().isoformat()
+                            rows = [(profile_name, p.get('plot_id'), p.get('plot_number'), now) for p in st.session_state.plots]
+                            with conn:
+                                conn.executemany(
+                                    "INSERT INTO profiles (profile_name, plot_id, plot_number, created_at) VALUES (?, ?, ?, ?)",
+                                    rows
+                                )
+                            conn.close()
+                            st.success(f"Saved {len(rows)} entries to profile '{profile_name}'.")
+                
+                with col2:
+                    if st.button("📥 Load", key="modal_load_step8", use_container_width=True):
+                        if not st.session_state.get('plots'):
+                            st.warning("No plots available to load into.")
+                        else:
+                            conn = ensure_db()
+                            cur = conn.cursor()
+                            cur.execute(
+                                "SELECT plot_id, plot_number FROM profiles WHERE profile_name = ? ORDER BY id DESC",
+                                (profile_name,)
+                            )
+                            rows = cur.fetchall()
+                            conn.close()
+                            if not rows:
+                                st.warning(f"No saved data for profile '{profile_name}'.")
+                            else:
+                                # Use most recent occurrence per plot_id
+                                seen = {}
+                                for plot_id, plot_number in rows:
+                                    if plot_id not in seen:
+                                        seen[plot_id] = plot_number
+                                applied = 0
+                                for p in st.session_state.plots:
+                                    if p.get('plot_id') in seen:
+                                        p['plot_number'] = seen[p['plot_id']]
+                                        applied += 1
+                                st.session_state.geo_plots = []
+                                st.success(f"Applied {applied} plot numbers from profile '{profile_name}'.")
+                                st.rerun()
+                
+                if st.button("📄 List profiles", key="modal_list_step8", use_container_width=True):
+                    conn = ensure_db()
+                    df = pd.read_sql_query(
+                        "SELECT profile_name, COUNT(*) as entries, MIN(created_at) as first_saved, MAX(created_at) as last_saved FROM profiles GROUP BY profile_name ORDER BY last_saved DESC",
+                        conn
+                    )
+                    conn.close()
+                    if df.empty:
+                        st.info("No profiles saved yet.")
+                    else:
+                        st.dataframe(df, use_container_width=True)
+        
         with col_btn1:
             st.write("")  # Spacer to align with controls panel above
         with col_btn2:
-            if st.button("Previous", use_container_width=True, key="prev_step8"):
+            if st.button("Previous", type="primary", key="prev_step8"):
                 st.session_state.current_step = 7  # Go back to Step 7
                 st.rerun()
         with col_btn3:
+            # Keep Publish button as standard primary button
             if st.button("Publish", type="primary", use_container_width=True, key="publish_step8"):
                 st.success("✅ Map published successfully!")
                 # Stay on Step 8 as it's the final step
 
 st.divider()
-st.caption("🔧 Geo Plot Mapper v2.2 - Contour Detection with Sequential Logic")
+st.caption("🔧 Geo Plot Mapper ")
+

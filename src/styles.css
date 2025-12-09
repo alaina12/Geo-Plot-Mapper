@@ -1,0 +1,1096 @@
+/* Geo Plot Mapper - Custom Styles */
+
+/* Fill top bar (Deploy area) with blue gradient on Step 1 only */
+body.step-1-active header[data-testid="stHeader"] {
+    background: linear-gradient(135deg, #1e3c72 0%, #2a5298 100%) !important;
+    padding: 0 !important;
+    height: auto !important;
+    border-bottom: none !important;
+}
+
+/* Target the entire header container including toolbar */
+body.step-1-active div[data-baseweb="header"] {
+    background: linear-gradient(135deg, #1e3c72 0%, #2a5298 100%) !important;
+}
+
+/* Style top toolbar elements to be white on Step 1 */
+body.step-1-active div[data-testid="stToolbar"] {
+    background: transparent !important;
+}
+
+body.step-1-active div[data-testid="stToolbar"] button,
+body.step-1-active div[data-testid="stToolbar"] a,
+body.step-1-active div[data-testid="stToolbar"] span,
+body.step-1-active div[data-testid="stToolbar"] div {
+    color: white !important;
+}
+
+/* Make Deploy button and menu items white on Step 1 */
+body.step-1-active header button,
+body.step-1-active header a,
+body.step-1-active header div,
+body.step-1-active header span {
+    color: white !important;
+}
+
+/* Target all text in header */
+body.step-1-active header * {
+    color: white !important;
+}
+
+/* Target Streamlit's header elements more specifically */
+body.step-1-active [data-testid="stHeader"] > div {
+    background: transparent !important;
+}
+
+body.step-1-active [data-testid="stToolbar"] {
+    background: transparent !important;
+}
+
+/* Ensure all buttons and links in header are white */
+body.step-1-active [data-testid="stHeader"] button,
+body.step-1-active [data-testid="stHeader"] a,
+body.step-1-active [data-testid="stToolbar"] button,
+body.step-1-active [data-testid="stToolbar"] a {
+    color: white !important;
+    fill: white !important;
+}
+
+/* Target SVG icons in header */
+body.step-1-active [data-testid="stHeader"] svg,
+body.step-1-active [data-testid="stToolbar"] svg {
+    fill: white !important;
+    color: white !important;
+}
+
+/* Full-width header container for Step 1 - centered in middle, not attached to top */
+.geo-header-container {
+    width: 100vw !important;
+    position: relative !important;
+    left: 50% !important;
+    right: 50% !important;
+    margin-left: -50vw !important;
+    margin-right: -50vw !important;
+    margin-top: -10px !important;
+    margin-bottom: 60px !important;
+    padding: 40px 20px 80px 20px !important;
+    background: linear-gradient(135deg, #1e3c72 0%, #2a5298 100%) !important;
+    text-align: center !important;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.15) !important;
+    z-index: 1 !important;
+    display: flex !important;
+    align-items: center !important;
+    justify-content: center !important;
+    min-height: 200px !important;
+}
+
+/* Ensure headings and content are visible on all steps */
+.stApp .main .block-container {
+    padding-top: 2rem !important;
+    padding-bottom: 2rem !important;
+    overflow: visible !important;
+    position: relative !important;
+}
+
+/* Ensure main content area is visible */
+.stApp .main {
+    overflow: visible !important;
+}
+
+/* Ensure subheaders are visible */
+h2[data-testid="stSubheader"],
+h3[data-testid="stSubheader"],
+.stSubheader,
+h2,
+h3 {
+    position: relative !important;
+    z-index: 10 !important;
+    margin-top: 1rem !important;
+    margin-bottom: 1rem !important;
+    visibility: visible !important;
+    display: block !important;
+    opacity: 1 !important;
+}
+
+/* Ensure toggles are visible */
+div[data-testid="stToggle"],
+div[data-baseweb="switch"] {
+    position: relative !important;
+    z-index: 10 !important;
+    visibility: visible !important;
+    display: block !important;
+    margin-top: 0.5rem !important;
+    margin-bottom: 1rem !important;
+    opacity: 1 !important;
+}
+
+
+/* Ensure tabs are visible */
+div[data-testid="stTabs"] {
+    position: relative !important;
+    z-index: 10 !important;
+    margin-top: 1rem !important;
+    visibility: visible !important;
+}
+
+/* Ensure all Streamlit elements are visible */
+.stApp [data-testid] {
+    visibility: visible !important;
+    opacity: 1 !important;
+}
+
+/* Inner container for centering content - ensure perfect centering */
+.geo-header-container > div {
+    width: 100% !important;
+    max-width: 100% !important;
+    display: flex !important;
+    align-items: center !important;
+    justify-content: center !important;
+    margin: 0 auto !important;
+    padding: 0 !important;
+    text-align: center !important;
+}
+
+/* Ensure h1 is centered */
+.geo-header-container h1 {
+    text-align: center !important;
+    margin: 0 auto !important;
+    width: auto !important;
+}
+
+/* Add spacing between header and upload section */
+body.step-1-active .main .block-container {
+    padding-top: 2rem !important;
+}
+
+/* Neumorphic/Frosted Glass File Uploader Styling - Horizontal Layout like Image 2 */
+/* Apply to all file uploaders, but more specific for step 1 */
+.custom-upload-wrapper div[data-testid="stFileUploader"],
+div[data-testid="stFileUploader"],
+body.step-1-active div[data-testid="stFileUploader"] {
+    background: rgba(240, 245, 250, 0.9) !important;
+    backdrop-filter: blur(10px) !important;
+    -webkit-backdrop-filter: blur(10px) !important;
+    border: 1px solid rgba(200, 210, 220, 0.3) !important;
+    border-radius: 12px !important;
+    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.08), 
+                0 2px 4px rgba(0, 0, 0, 0.04),
+                inset 0 1px 0 rgba(255, 255, 255, 0.5) !important;
+    padding: 20px 30px !important;
+    margin-top: -40px !important;
+    margin-bottom: 20px !important;
+    overflow: visible !important;
+}
+
+/* Style the file uploader drop zone - horizontal layout */
+div[data-testid="stFileUploader"] > div:first-child,
+body.step-1-active div[data-testid="stFileUploader"] > div:first-child {
+    background: transparent !important;
+    border: none !important;
+    border-radius: 0 !important;
+    padding: 0 !important;
+    display: flex !important;
+    flex-direction: row !important;
+    align-items: center !important;
+    gap: 24px !important;
+    transition: all 0.3s ease !important;
+    min-height: auto !important;
+}
+
+body.step-1-active div[data-testid="stFileUploader"] > div:first-child:hover {
+    background: transparent !important;
+}
+
+/* Container for icon, button, and text - force horizontal */
+body.step-1-active div[data-testid="stFileUploader"] > div:first-child > div {
+    display: flex !important;
+    flex-direction: row !important;
+    align-items: center !important;
+    gap: 20px !important;
+    width: 100% !important;
+    flex-wrap: nowrap !important;
+}
+
+/* Ensure all children are in a row */
+body.step-1-active div[data-testid="stFileUploader"] > div:first-child > div > * {
+    flex-shrink: 0 !important;
+}
+
+/* Style upload icon in file uploader - dark grey outline, left side */
+div[data-testid="stFileUploader"] svg,
+body.step-1-active div[data-testid="stFileUploader"] svg {
+    color: #4a5568 !important;
+    fill: none !important;
+    stroke: #4a5568 !important;
+    stroke-width: 1.5 !important;
+    width: 40px !important;
+    height: 40px !important;
+    opacity: 0.9 !important;
+    flex-shrink: 0 !important;
+}
+
+/* Style "Browse files" button - light blue neumorphic button */
+div[data-testid="stFileUploader"] button,
+body.step-1-active div[data-testid="stFileUploader"] button {
+    background: rgba(135, 206, 250, 0.85) !important;
+    backdrop-filter: blur(8px) !important;
+    -webkit-backdrop-filter: blur(8px) !important;
+    color: white !important;
+    border: 1px solid rgba(135, 206, 250, 0.3) !important;
+    border-radius: 10px !important;
+    padding: 12px 24px !important;
+    font-weight: 600 !important;
+    font-size: 14px !important;
+    box-shadow: 0 4px 12px rgba(135, 206, 250, 0.3),
+                0 2px 4px rgba(0, 0, 0, 0.1),
+                inset 0 1px 0 rgba(255, 255, 255, 0.4) !important;
+    transition: all 0.3s ease !important;
+    flex-shrink: 0 !important;
+    cursor: pointer !important;
+}
+
+div[data-testid="stFileUploader"] button:hover,
+body.step-1-active div[data-testid="stFileUploader"] button:hover {
+    background: rgba(135, 206, 250, 0.95) !important;
+    box-shadow: 0 6px 16px rgba(135, 206, 250, 0.4),
+                0 2px 6px rgba(0, 0, 0, 0.12),
+                inset 0 1px 0 rgba(255, 255, 255, 0.5) !important;
+    transform: translateY(-1px) !important;
+}
+
+/* Style drag and drop text - horizontal layout */
+body.step-1-active div[data-testid="stFileUploader"] p,
+body.step-1-active div[data-testid="stFileUploader"] span {
+    color: #4a5568 !important;
+    font-weight: 500 !important;
+    font-size: 16px !important;
+    margin: 0 !important;
+    line-height: 1.5 !important;
+}
+
+/* Container for text content (main text + file limits) */
+div[data-testid="stFileUploader"] > div:first-child > div,
+body.step-1-active div[data-testid="stFileUploader"] > div:first-child > div {
+    display: flex !important;
+    flex-direction: column !important;
+    align-items: flex-start !important;
+    gap: 6px !important;
+    flex: 1 !important;
+}
+
+/* Style file limit text - below main text */
+div[data-testid="stFileUploader"] small,
+body.step-1-active div[data-testid="stFileUploader"] small {
+    color: #718096 !important;
+    font-size: 13px !important;
+    display: block !important;
+    margin: 0 !important;
+    line-height: 1.4 !important;
+}
+
+/* Reorganize uploader content to horizontal layout */
+body.step-1-active div[data-testid="stFileUploader"] > div:first-child {
+    flex-wrap: wrap !important;
+}
+
+/* Ensure proper spacing */
+body.step-1-active div[data-testid="stFileUploader"] label {
+    margin-bottom: 0 !important;
+    display: none !important; /* Hide default label */
+}
+
+/* Additional styling for better horizontal layout matching image 2 */
+body.step-1-active div[data-testid="stFileUploader"] > div:first-child > div:first-child {
+    display: flex !important;
+    flex-direction: row !important;
+    align-items: center !important;
+    gap: 20px !important;
+    width: 100% !important;
+    flex-wrap: nowrap !important;
+}
+
+/* Make the text area flexible */
+body.step-1-active div[data-testid="stFileUploader"] > div:first-child > div:first-child > div:last-child {
+    display: flex !important;
+    flex-direction: column !important;
+    align-items: flex-start !important;
+    gap: 4px !important;
+    flex: 1 !important;
+}
+
+/* Remove top padding from main container when header is present */
+.main .block-container {
+    padding-top: 1rem !important;
+}
+
+/* ========================================
+   SIDEBAR STYLING - MODERN UI (NON-SCROLLABLE)
+   ======================================== */
+
+/* Sidebar wrapper - WHITE background, NO SCROLLING */
+section[data-testid="stSidebar"] {
+    background-color: #ffffff !important;
+    border-radius: 0 12px 12px 0 !important;
+    box-shadow: 2px 0 8px rgba(0, 0, 0, 0.1) !important;
+    overflow: hidden !important;
+    position: relative !important;
+}
+
+/* First child - NO SCROLLING, fixed height */
+section[data-testid="stSidebar"] > div:first-child {
+    background-color: #ffffff !important;
+    padding: 20px 12px !important;
+    overflow: hidden !important;
+    height: 100vh !important;
+    max-height: 100vh !important;
+    display: flex !important;
+    flex-direction: column !important;
+}
+
+/* Prevent double scrolling - remove overflow from other containers */
+section[data-testid="stSidebar"] > div:not(:first-child) {
+    overflow: visible !important;
+}
+
+section[data-testid="stSidebar"] [data-testid="stVerticalBlock"] {
+    overflow: visible !important;
+}
+
+/* Hide scrollbars completely on sidebar */
+section[data-testid="stSidebar"]::-webkit-scrollbar {
+    display: none !important;
+}
+
+section[data-testid="stSidebar"] {
+    -ms-overflow-style: none !important;
+    scrollbar-width: none !important;
+}
+
+/* Main page - GREY background, ENABLE scrolling */
+.main {
+    background-color: #f5f7fa !important;
+    overflow-y: auto !important;
+    overflow-x: hidden !important;
+    height: 100vh !important;
+    padding-top: 0 !important;
+}
+
+div[data-testid="stAppViewContainer"] {
+    background-color: #f5f7fa !important;
+    overflow-y: auto !important;
+    overflow-x: hidden !important;
+    height: 100vh !important;
+    padding-top: 0 !important;
+}
+
+/* Main content area - grey background, ensure top is visible */
+div[data-testid="stAppViewContainer"] > div {
+    background-color: #f5f7fa !important;
+    padding-top: 0 !important;
+}
+
+/* Block container - ensure content is not hidden at top */
+.block-container {
+    padding-top: 1rem !important;
+    padding-bottom: 1rem !important;
+}
+
+/* Block container - allow scrolling */
+.block-container {
+    overflow-y: visible !important;
+    padding-top: 1rem !important;
+}
+
+/* Sidebar navigation container */
+.sidebar-nav-container {
+    display: flex !important;
+    flex-direction: column !important;
+    gap: 4px !important;
+}
+
+/* Sidebar navigation items - clean display matching image */
+.sidebar-nav-item {
+    position: relative !important;
+    margin-bottom: 4px !important;
+    cursor: pointer !important;
+}
+
+.sidebar-nav-display {
+    display: flex !important;
+    align-items: center !important;
+    gap: 12px !important;
+    padding: 10px 14px !important;
+    border-radius: 8px !important;
+    font-size: 14px !important;
+    font-weight: 500 !important;
+    min-height: 40px !important;
+    background-color: #f5f7fa !important; /* Light grey for inactive items */
+    color: #333 !important;
+    transition: all 0.2s ease !important;
+}
+
+.sidebar-nav-display:hover {
+    background-color: #e8ecf1 !important;
+}
+
+.sidebar-nav-display.active {
+    background-color: #1f3c88 !important; /* Dark blue for active */
+    color: white !important;
+}
+
+.sidebar-nav-icon {
+    flex-shrink: 0 !important;
+    width: 20px !important;
+    height: 20px !important;
+    display: flex !important;
+    align-items: center !important;
+    justify-content: center !important;
+}
+
+.sidebar-nav-icon svg {
+    width: 20px !important;
+    height: 20px !important;
+    stroke: #333 !important;
+    color: #333 !important;
+    fill: none !important;
+}
+
+.sidebar-nav-display.active .sidebar-nav-icon svg {
+    stroke: white !important;
+    color: white !important;
+}
+
+.sidebar-nav-text {
+    flex: 1 !important;
+    white-space: nowrap !important;
+    overflow: hidden !important;
+    text-overflow: ellipsis !important;
+}
+
+/* Hide invisible buttons and their containers */
+section[data-testid="stSidebar"] button[key^="nav_step_"] {
+    position: absolute !important;
+    opacity: 0 !important;
+    z-index: 10 !important;
+    cursor: pointer !important;
+}
+
+/* Hide button containers that might show HTML */
+section[data-testid="stSidebar"] [data-testid="stButton"]:has(button[key^="nav_step_"]) {
+    position: absolute !important;
+    opacity: 0 !important;
+    z-index: 10 !important;
+    pointer-events: auto !important;
+}
+
+/* Hide any empty containers or markdown wrappers showing HTML */
+section[data-testid="stSidebar"] [data-testid="stMarkdownContainer"]:has(.sidebar-nav-item) {
+    margin: 0 !important;
+    padding: 0 !important;
+}
+
+section[data-testid="stSidebar"] [data-testid="stMarkdownContainer"] p:empty {
+    display: none !important;
+}
+
+/* Ensure markdown containers don't show HTML tags */
+section[data-testid="stSidebar"] [data-testid="stMarkdownContainer"] {
+    margin: 0 !important;
+    padding: 0 !important;
+}
+
+/* Prevent markdown from wrapping in paragraph tags - use display: block for containers */
+section[data-testid="stSidebar"] [data-testid="stMarkdownContainer"] {
+    margin: 0 !important;
+    padding: 0 !important;
+}
+
+section[data-testid="stSidebar"] [data-testid="stMarkdownContainer"] p {
+    margin: 0 !important;
+    padding: 0 !important;
+    display: block !important;
+}
+
+/* Ensure sidebar-nav-container and items are displayed properly */
+section[data-testid="stSidebar"] .sidebar-nav-container {
+    display: flex !important;
+    flex-direction: column !important;
+}
+
+section[data-testid="stSidebar"] .sidebar-nav-item {
+    display: block !important;
+}
+
+/* Ensure markdown containers render HTML properly */
+section[data-testid="stSidebar"] [data-testid="stMarkdownContainer"] {
+    margin: 0 !important;
+    padding: 0 !important;
+}
+
+section[data-testid="stSidebar"] [data-testid="stMarkdownContainer"] p {
+    margin: 0 !important;
+    padding: 0 !important;
+    display: block !important;
+}
+
+/* Hide empty paragraphs */
+section[data-testid="stSidebar"] [data-testid="stMarkdownContainer"] p:empty {
+    display: none !important;
+    height: 0 !important;
+    margin: 0 !important;
+    padding: 0 !important;
+}
+
+/* Ensure sidebar items are visible and properly styled */
+section[data-testid="stSidebar"] .sidebar-nav-container {
+    display: flex !important;
+    flex-direction: column !important;
+    gap: 4px !important;
+}
+
+section[data-testid="stSidebar"] .sidebar-nav-item {
+    display: block !important;
+}
+
+/* Hide button wrapper containers */
+section[data-testid="stSidebar"] [data-testid="stButton"] {
+    margin: 0 !important;
+    padding: 0 !important;
+}
+
+section[data-testid="stSidebar"] [data-testid="stButton"]:has(button[key^="nav_step_"]) {
+    position: absolute !important;
+    top: 0 !important;
+    left: 0 !important;
+    width: 100% !important;
+    height: 40px !important;
+    opacity: 0 !important;
+    z-index: 10 !important;
+    pointer-events: auto !important;
+}
+
+/* Sidebar icon styling */
+.sidebar-icon {
+    flex-shrink: 0 !important;
+    display: flex !important;
+    align-items: center !important;
+    justify-content: center !important;
+    width: 20px !important;
+    height: 20px !important;
+}
+
+.sidebar-icon svg {
+    width: 20px !important;
+    height: 20px !important;
+    stroke: #333 !important;
+    color: #333 !important;
+    fill: none !important;
+    vertical-align: middle !important;
+}
+
+.sidebar-item.active .sidebar-icon svg {
+    stroke: white !important;
+    color: white !important;
+    fill: none !important;
+}
+
+/* Sidebar text styling */
+.sidebar-text {
+    flex: 1 !important;
+    white-space: nowrap !important;
+    overflow: hidden !important;
+    text-overflow: ellipsis !important;
+    line-height: 1.4 !important;
+    display: flex !important;
+    align-items: center !important;
+}
+
+/* Ensure proper rendering - hide any text nodes that might show HTML tags */
+section[data-testid="stSidebar"] [data-testid="stMarkdownContainer"] p:empty {
+    display: none !important;
+}
+
+/* Sidebar header */
+.sidebar-header {
+    font-size: 18px !important;
+    font-weight: bold !important;
+    color: #1a1a1a !important;
+    margin-bottom: 16px !important;
+    padding: 0 14px !important;
+    line-height: 1.5 !important;
+}
+
+/* Ensure proper spacing between sidebar elements */
+section[data-testid="stSidebar"] > div > * {
+    margin-bottom: 4px !important;
+}
+
+/* Style divider in sidebar */
+section[data-testid="stSidebar"] hr {
+    margin: 16px 0 !important;
+    border-color: #e0e0e0 !important;
+}
+
+/* Fix any alignment issues with Streamlit elements */
+section[data-testid="stSidebar"] [data-testid="stMarkdownContainer"] {
+    margin: 0 !important;
+    padding: 0 !important;
+}
+
+/* Prevent iframe overflow causing double scrollbars */
+iframe {
+    overflow: hidden !important;
+}
+
+/* Ensure block container doesn't cause extra spacing */
+.block-container {
+    padding-top: 1rem !important;
+}
+
+/* Hide any empty paragraph tags that might create spacing */
+section[data-testid="stSidebar"] [data-testid="stMarkdownContainer"] p {
+    margin: 0 !important;
+    padding: 0 !important;
+}
+
+/* Ensure sidebar items are properly contained */
+section[data-testid="stSidebar"] [data-testid="stMarkdownContainer"]:has(.sidebar-item) {
+    margin-bottom: 0 !important;
+}
+
+/* Database button styling - positioned at bottom */
+button[key="sidebar_db_button"] {
+    position: relative !important;
+    margin-top: auto !important;
+}
+
+/* Remove any empty containers or spacing */
+section[data-testid="stSidebar"] [data-testid="stVerticalBlock"] > div:empty {
+    display: none !important;
+}
+
+/* Ensure no extra spacing between sidebar elements */
+section[data-testid="stSidebar"] [data-testid="stMarkdownContainer"] {
+    margin: 0 !important;
+    padding: 0 !important;
+}
+
+/* Hide any empty markdown containers */
+section[data-testid="stSidebar"] [data-testid="stMarkdownContainer"]:empty {
+    display: none !important;
+}
+
+/* Main content background - white */
+.main {
+    background-color: #ffffff !important;
+}
+
+div[data-testid="stAppViewContainer"] {
+    background-color: #ffffff !important;
+}
+
+/* ========================================
+   FILE UPLOADER DELETE BUTTON (X)
+   ======================================== */
+
+/* Delete/Close button - smaller, grey background */
+div[data-testid="stFileUploader"] button[kind="icon"],
+div[data-testid="stFileUploader"] button[aria-label*="Remove"],
+div[data-testid="stFileUploader"] button[aria-label*="Delete"],
+div[data-testid="stFileUploader"] button[data-testid*="fileDeleteButton"] {
+    background-color: #6c757d !important;
+    width: 32px !important;
+    height: 32px !important;
+    min-width: 32px !important;
+    min-height: 32px !important;
+    padding: 4px !important;
+    border-radius: 6px !important;
+}
+
+div[data-testid="stFileUploader"] button[kind="icon"]:hover,
+div[data-testid="stFileUploader"] button[aria-label*="Remove"]:hover,
+div[data-testid="stFileUploader"] button[aria-label*="Delete"]:hover,
+div[data-testid="stFileUploader"] button[data-testid*="fileDeleteButton"]:hover {
+    background-color: #5a6268 !important;
+}
+
+/* ========================================
+   IMAGE PREVIEW EXPANDER
+   ======================================== */
+
+/* Style expander to be inline/compact */
+div[data-testid="stExpander"] {
+    border: 1px solid #e0e0e0 !important;
+    border-radius: 8px !important;
+    background-color: #ffffff !important;
+    margin-bottom: 1rem !important;
+}
+
+div[data-testid="stExpander"] summary {
+    font-weight: 500 !important;
+    color: #1f3c88 !important;
+}
+
+/* ============================================
+   NEXT BUTTONS - Dark Blue Pill with White Chevron
+   ============================================ */
+button[key*="next_step"],
+button[aria-label="Next"],
+div[data-testid="column"] button[key*="next_step"],
+div[data-testid="stButton"] button[key*="next_step"] {
+    background-color: #1e40af !important;
+    background: #1e40af !important;
+    color: #ffffff !important;
+    border: none !important;
+    border-radius: 50px !important;
+    padding: 14px 28px 14px 20px !important;
+    font-weight: 700 !important;
+    font-size: 14px !important;
+    letter-spacing: 2px !important;
+    text-transform: uppercase !important;
+    display: inline-flex !important;
+    align-items: center !important;
+    justify-content: center !important;
+    gap: 12px !important;
+    box-shadow: 0 8px 20px rgba(30, 64, 175, 0.35) !important;
+    transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1) !important;
+    cursor: pointer !important;
+    min-height: 48px !important;
+    width: auto !important;
+    min-width: 120px !important;
+}
+
+button[key*="next_step"]::before,
+button[aria-label="Next"]::before {
+    content: "›" !important;
+    order: 1 !important;
+    display: inline-flex !important;
+    align-items: center !important;
+    justify-content: center !important;
+    width: 32px !important;
+    height: 32px !important;
+    border-radius: 50% !important;
+    background: #ffffff !important;
+    color: #1e40af !important;
+    font-size: 24px !important;
+    font-weight: 900 !important;
+    line-height: 1 !important;
+    flex-shrink: 0 !important;
+    margin-left: 8px !important;
+}
+
+button[key*="next_step"]:hover,
+button[aria-label="Next"]:hover {
+    background-color: #2563eb !important;
+    background: #2563eb !important;
+    box-shadow: 0 12px 28px rgba(37, 99, 235, 0.4) !important;
+    transform: translateY(-2px) scale(1.02) !important;
+}
+
+button[key*="next_step"]:active,
+button[aria-label="Next"]:active {
+    background-color: #1e3a8a !important;
+    background: #1e3a8a !important;
+    transform: translateY(0) scale(1) !important;
+    box-shadow: 0 4px 12px rgba(30, 58, 138, 0.3) !important;
+}
+
+/* ============================================
+   PREVIOUS BUTTONS - Dark Blue (same as Next)
+   ============================================ */
+button[key*="prev_step"],
+button[aria-label="Previous"],
+div[data-testid="column"] button[key*="prev_step"],
+div[data-testid="stButton"] button[key*="prev_step"] {
+    background-color: #1e40af !important;
+    background: #1e40af !important;
+    color: #ffffff !important;
+    border: none !important;
+    border-radius: 50px !important;
+    padding: 14px 28px 14px 20px !important;
+    font-weight: 700 !important;
+    font-size: 14px !important;
+    letter-spacing: 2px !important;
+    text-transform: uppercase !important;
+    display: inline-flex !important;
+    align-items: center !important;
+    justify-content: center !important;
+    gap: 12px !important;
+    box-shadow: 0 8px 20px rgba(30, 64, 175, 0.35) !important;
+    transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1) !important;
+    cursor: pointer !important;
+    min-height: 48px !important;
+    width: auto !important;
+    min-width: 120px !important;
+}
+
+button[key*="prev_step"]::after,
+button[aria-label="Previous"]::after {
+    content: "‹" !important;
+    order: -1 !important;
+    display: inline-flex !important;
+    align-items: center !important;
+    justify-content: center !important;
+    width: 32px !important;
+    height: 32px !important;
+    border-radius: 50% !important;
+    background: #ffffff !important;
+    color: #1e40af !important;
+    font-size: 24px !important;
+    font-weight: 900 !important;
+    line-height: 1 !important;
+    flex-shrink: 0 !important;
+    margin-right: 8px !important;
+}
+
+button[key*="prev_step"]:hover,
+button[aria-label="Previous"]:hover {
+    background-color: #2563eb !important;
+    background: #2563eb !important;
+    box-shadow: 0 12px 28px rgba(37, 99, 235, 0.4) !important;
+    transform: translateY(-2px) scale(1.02) !important;
+}
+
+button[key*="prev_step"]:active,
+button[aria-label="Previous"]:active {
+    background-color: #1e3a8a !important;
+    background: #1e3a8a !important;
+    transform: translateY(0) scale(1) !important;
+    box-shadow: 0 4px 12px rgba(30, 58, 138, 0.3) !important;
+}
+
+/* Minimal spacing between Previous and Next buttons */
+div[data-testid="column"]:has(button[key*="prev_step"]) {
+    padding-right: 4px !important;
+}
+
+div[data-testid="column"]:has(button[key*="next_step"]) {
+    padding-left: 4px !important;
+}
+
+/* Style Renumber section expander */
+div[data-testid="stExpander"]:has(div:contains("🔢 Renumber Plots")) {
+    border: 2px solid #9C27B0 !important;
+    border-radius: 8px !important;
+    background-color: #f3e5f5 !important;
+}
+
+/* Renumber button styling */
+button[key="btn_renumber_plots"] {
+    background-color: #9C27B0 !important;
+    color: white !important;
+    font-weight: bold !important;
+    padding: 10px 20px !important;
+}
+
+button[key="btn_renumber_plots"]:hover {
+    background-color: #7B1FA2 !important;
+}
+
+/* Primary Buttons - Dark blue #1f3c88 */
+button[kind="primary"],
+button[data-testid="baseButton-primary"],
+div[data-testid="stButton"] > button[kind="primary"],
+.stButton > button[kind="primary"],
+button[type="primary"] {
+    background-color: #1f3c88 !important;
+    background: #1f3c88 !important;
+    color: white !important;
+    border: 1px solid #1f3c88 !important;
+    border-radius: 8px !important;
+    font-weight: 600 !important;
+    padding: 0.5rem 1rem !important;
+    transition: all 0.3s ease !important;
+}
+
+button[kind="primary"]:hover,
+button[data-testid="baseButton-primary"]:hover,
+div[data-testid="stButton"] > button[kind="primary"]:hover,
+.stButton > button[kind="primary"]:hover,
+button[type="primary"]:hover {
+    background-color: #2a4fa0 !important;
+    background: #2a4fa0 !important;
+    border-color: #2a4fa0 !important;
+    transform: translateY(-1px) !important;
+    box-shadow: 0 4px 8px rgba(31, 60, 136, 0.3) !important;
+}
+
+button[kind="primary"]:active,
+button[data-testid="baseButton-primary"]:active,
+div[data-testid="stButton"] > button[kind="primary"]:active,
+.stButton > button[kind="primary"]:active,
+button[type="primary"]:active {
+    background-color: #1a3460 !important;
+    transform: translateY(0) !important;
+}
+
+/* File Uploader Buttons - Dark blue #1f3c88 */
+div[data-testid="stFileUploader"] button,
+body.step-1-active div[data-testid="stFileUploader"] button {
+    background: #1f3c88 !important;
+    backdrop-filter: blur(8px) !important;
+    -webkit-backdrop-filter: blur(8px) !important;
+    color: white !important;
+    border: 1px solid #1e3c72 !important;
+    border-radius: 10px !important;
+    padding: 12px 24px !important;
+    font-weight: 600 !important;
+    font-size: 14px !important;
+    box-shadow: 0 4px 12px rgba(30, 60, 114, 0.3),
+                0 2px 4px rgba(0, 0, 0, 0.1),
+                inset 0 1px 0 rgba(255, 255, 255, 0.2) !important;
+    transition: all 0.3s ease !important;
+    flex-shrink: 0 !important;
+    cursor: pointer !important;
+}
+
+div[data-testid="stFileUploader"] button:hover,
+body.step-1-active div[data-testid="stFileUploader"] button:hover {
+    background: #2a4fa0 !important;
+    border-color: #2a4fa0 !important;
+    box-shadow: 0 6px 16px rgba(30, 60, 114, 0.4),
+                0 2px 6px rgba(0, 0, 0, 0.12),
+                inset 0 1px 0 rgba(255, 255, 255, 0.3) !important;
+    transform: translateY(-1px) !important;
+}
+
+/* Download Buttons */
+.stDownloadButton > button,
+button[kind="primary"][data-testid*="download"],
+div[data-testid="stDownloadButton"] > button {
+    background-color: #1f3c88 !important;
+    background: #1f3c88 !important;
+    color: white !important;
+    border: 1px solid #1f3c88 !important;
+    border-radius: 8px !important;
+}
+
+.stDownloadButton > button:hover,
+button[kind="primary"][data-testid*="download"]:hover,
+div[data-testid="stDownloadButton"] > button:hover {
+    background-color: #2a4fa0 !important;
+    background: #2a4fa0 !important;
+    border-color: #2a4fa0 !important;
+}
+
+/* Form Submit Buttons */
+.stFormSubmitButton > button,
+button[kind="formSubmit"],
+div[data-testid="stFormSubmitButton"] > button {
+    background-color: #1f3c88 !important;
+    background: #1f3c88 !important;
+    color: white !important;
+    border: 1px solid #1f3c88 !important;
+    border-radius: 8px !important;
+}
+
+.stFormSubmitButton > button:hover,
+button[kind="formSubmit"]:hover,
+div[data-testid="stFormSubmitButton"] > button:hover {
+    background-color: #2a4fa0 !important;
+    background: #2a4fa0 !important;
+    border-color: #2a4fa0 !important;
+}
+
+/* All Streamlit emotion-cache button classes */
+button[class*="st-emotion-cache"][kind="primary"],
+div[class*="st-emotion-cache"] > button[kind="primary"] {
+    background-color: #1f3c88 !important;
+    background: #1f3c88 !important;
+    color: white !important;
+    border-color: #1f3c88 !important;
+    border-radius: 8px !important;
+}
+
+button[class*="st-emotion-cache"][kind="primary"]:hover,
+div[class*="st-emotion-cache"] > button[kind="primary"]:hover {
+    background-color: #2a4fa0 !important;
+    background: #2a4fa0 !important;
+    border-color: #2a4fa0 !important;
+}
+
+/* Catch-all for any button inside Streamlit containers with primary styling */
+div[data-testid="column"] button[kind="primary"],
+div[data-testid="stVerticalBlock"] button[kind="primary"],
+div[data-testid="stHorizontalBlock"] button[kind="primary"] {
+    background-color: #1f3c88 !important;
+    background: #1f3c88 !important;
+    color: white !important;
+    border-color: #1f3c88 !important;
+    border-radius: 8px !important;
+}
+
+div[data-testid="column"] button[kind="primary"]:hover,
+div[data-testid="stVerticalBlock"] button[kind="primary"]:hover,
+div[data-testid="stHorizontalBlock"] button[kind="primary"]:hover {
+    background-color: #2a4fa0 !important;
+    background: #2a4fa0 !important;
+    border-color: #2a4fa0 !important;
+}
+
+/* Revert Changes and Randomize buttons - ensure dark blue (they use type="primary" so they'll inherit primary button styles) */
+
+/* Slightly tighten spacing on both nav buttons */
+button[key*="next_step"],
+button[key*="prev_step"] {
+    margin-left: 4px !important;
+    margin-right: 4px !important;
+}
+
+/* ============================================
+   RE-ASSERT PILL STYLING AFTER PRIMARY OVERRIDES
+   This ensures navigation buttons keep their pill design
+   ============================================ */
+
+/* Next Buttons - Dark Blue Pill */
+button[key*="next_step"],
+button[aria-label="Next"],
+div[data-testid="column"] button[key*="next_step"],
+div[data-testid="stVerticalBlock"] button[key*="next_step"],
+div[data-testid="stHorizontalBlock"] button[key*="next_step"],
+button[kind="primary"][key*="next_step"] {
+    background-color: #1e40af !important;
+    background: #1e40af !important;
+    color: #ffffff !important;
+    border: none !important;
+    border-radius: 50px !important;
+    padding: 14px 28px 14px 20px !important;
+    box-shadow: 0 8px 20px rgba(30, 64, 175, 0.35) !important;
+    min-height: 48px !important;
+}
+
+button[key*="next_step"]:hover,
+button[aria-label="Next"]:hover,
+button[kind="primary"][key*="next_step"]:hover {
+    background-color: #2563eb !important;
+    background: #2563eb !important;
+    box-shadow: 0 12px 28px rgba(37, 99, 235, 0.4) !important;
+    transform: translateY(-2px) scale(1.02) !important;
+}
+
+/* Previous Buttons - White/Light Pill */
+button[key*="prev_step"],
+button[aria-label="Previous"],
+div[data-testid="column"] button[key*="prev_step"],
+div[data-testid="stVerticalBlock"] button[key*="prev_step"],
+div[data-testid="stHorizontalBlock"] button[key*="prev_step"] {
+    background-color: #ffffff !important;
+    background: #ffffff !important;
+    color: #1f2937 !important;
+    border: 2px solid #d1d5db !important;
+    border-radius: 50px !important;
+    padding: 14px 20px 14px 28px !important;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.08) !important;
+    min-height: 48px !important;
+}
+
+button[key*="prev_step"]:hover,
+button[aria-label="Previous"]:hover {
+    background-color: #f9fafb !important;
+    background: #f9fafb !important;
+    border-color: #1e40af !important;
+    box-shadow: 0 8px 20px rgba(0, 0, 0, 0.12) !important;
+    transform: translateY(-2px) scale(1.02) !important;
+}
+
+

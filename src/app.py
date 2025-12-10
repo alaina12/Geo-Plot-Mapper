@@ -1292,7 +1292,7 @@ def renumber_plots_sequentially(plots, selected_plot_id, direction, numbering_mo
                     plot_data['plot']['plot_id'] = f"Plot {current_number}"
                     current_number += 1
         
-        print(f"✅ Renumbered {len(plots)} plots row-wise (SNAKE pattern)")
+        print(f" Renumbered {len(plots)} plots row-wise (SNAKE pattern)")
         print(f"   Starting from: {selected_plot_id} → Plot 1")
         print(f"   Direction: {'LTR→RTL→LTR...' if direction == 'left' else 'RTL→LTR→RTL...'}")
         
@@ -1448,7 +1448,7 @@ def renumber_plots_sequentially(plots, selected_plot_id, direction, numbering_mo
                         print(f"      Row {row_idx}: {plot_data['plot']['plot_id']} → {current_number}")
                         current_number += 1
             
-            print(f"\n✅ Renumbered ALL plots: 1 to {current_number - 1}")
+            print(f"\n Renumbered ALL plots: 1 to {current_number - 1}")
             return plots
         
         # Create ordered list of columns starting from selected column
@@ -2163,7 +2163,21 @@ elif current_step == 2:
         st.divider()
         
         # Show instruction
-        st.info("💡 **How to use:** Edit plots in the viewer above, then click 'Save Changes'. The yellow box will appear with coordinates - copy and paste them below.")
+        st.markdown(
+            """
+            <div style="
+                background:#fee2e2;
+                color:#b91c1c;
+                border:1px solid #fecaca;
+                border-radius:8px;
+                padding:12px 14px;
+                font-weight:700;
+            ">
+                ⚠️ <strong>How to use :</strong> Edit plots above, click <em>Save Changes</em> — the yellow box already contains the copied JSON. Paste it below, then click save button and then click <em>Detect Coordinates</em>.
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
         
         # Renumber Plot Section
         with st.expander("Renumber Plots", expanded=False):
@@ -2173,7 +2187,7 @@ elif current_step == 2:
             st.write("3. Choose the starting direction")
             st.write("4. All plots will be renumbered in a snake/zigzag pattern")
             
-            st.info("💡 **Tip:** Uses snake pattern (alternating directions) for efficient numbering!\n\n" + 
+            st.info(" **Tip:** Uses snake pattern (alternating directions) for efficient numbering!\n\n" + 
                    "• **Row-wise:** Numbers across row, then alternates direction each row\n\n" +
                    "• **Column-wise:** Numbers down/up column, then alternates direction each column")
             
@@ -2223,7 +2237,7 @@ elif current_step == 2:
                 
                 # Optional: Manual Plot 2 selection
                 st.divider()
-                with st.expander("🎯 Advanced: Manual Plot #2 Selection (Optional)", expanded=False):
+                with st.expander("Manual Plot #2 Selection (Optional)", expanded=False):
                     st.markdown("""
                     **When to use:** Plot 1 spans multiple columns/rows with multiple plots below/beside it
                     
@@ -2244,7 +2258,7 @@ elif current_step == 2:
                     
                     second_plot_id = None
                     if enable_manual_plot2:
-                        st.success("👍 Great! Now select which plot should be Plot #2:")
+                        st.success("Great! Now select which plot should be Plot #2:")
                         # Filter out Plot 1 from options
                         plot_options_for_plot2 = {k: v for k, v in plot_options.items() if v != selected_plot_id}
                         plot_options_list_plot2 = list(plot_options_for_plot2.keys())
@@ -2258,11 +2272,11 @@ elif current_step == 2:
                             )
                             second_plot_id = plot_options_for_plot2.get(selected_plot2_display)
                             
-                            st.info(f"✅ Ready to renumber: {selected_plot_id} → Plot 1, {second_plot_id} → Plot 2")
+                            st.info(f"Ready to renumber: {selected_plot_id} → Plot 1, {second_plot_id} → Plot 2")
                         else:
                             st.warning("No other plots available.")
                 
-                if st.button("✅ Renumber All Plots", type="primary", key="btn_renumber_plots"):
+                if st.button("Renumber All Plots", type="primary", key="btn_renumber_plots"):
                     if selected_plot_id:
                         # Store original numbers for potential rollback
                         original_numbers = {p.get('plot_id'): p.get('plot_number') for p in st.session_state.plots}
@@ -2287,7 +2301,7 @@ elif current_step == 2:
                                 if plot_id in plot_id_to_number:
                                     geo_plot['plot_number'] = plot_id_to_number[plot_id]
                             
-                            print(f"✅ Updated {len(st.session_state.geo_plots)} geo_plots with new plot numbers")
+                            print(f"Updated {len(st.session_state.geo_plots)} geo_plots with new plot numbers")
                         
                         # Regenerate image with new numbers
                         if st.session_state.detection_image is not None:
@@ -2336,16 +2350,16 @@ elif current_step == 2:
                         else:
                             direction_text = "Top→Bottom→Top (↓↑↓)" if direction == 'left' else "Bottom→Top→Bottom (↑↓↑)"
                         
-                        success_msg = f"✅ Successfully renumbered {len(st.session_state.plots)} plots!"
+                        success_msg = f"Successfully renumbered {len(st.session_state.plots)} plots!"
                         success_msg += f"\n\n🎯 **Starting Plot:** {selected_plot_id} → Plot 1"
                         if second_plot_id:
                             success_msg += f"\n🎯 **Plot #2:** {second_plot_id} → Plot 2 (manually selected)"
                         success_msg += f"\n📊 **Mode:** {mode_text.title()} - {direction_text}"
                         success_msg += f"\n🔢 **Pattern:** Snake pattern with synchronized plot IDs"
                         if st.session_state.geo_plots:
-                            success_msg += f"\n\n📍 **Updated in:**\n- ✅ Step 2 (Regenerated Image)\n- ✅ Step 5 (Brochure Preview)\n- ✅ Step 8 (Google Map Preview)"
+                            success_msg += f"\n\n📍 **Updated in:**\n-  Step 2 (Regenerated Image)\n-  Step 5 (Brochure Preview)\n- ✅ Step 8 (Google Map Preview)"
                         else:
-                            success_msg += f"\n\n📍 **Updated in:**\n- ✅ Step 2 (Regenerated Image)\n- ✅ Step 5 (Brochure Preview)\n- ℹ️ Step 8 (Map Preview) - will update when you generate the map"
+                            success_msg += f"\n\n📍 **Updated in:**\n-  Step 2 (Regenerated Image)\n-  Step 5 (Brochure Preview)\n- ℹ️ Step 8 (Map Preview) - will update when you generate the map"
                         
                         st.success(success_msg)
                         st.rerun()
@@ -2354,142 +2368,90 @@ elif current_step == 2:
             else:
                 st.warning("No plots available for renumbering.")
         
-        col_apply, col_detect = st.columns(2)
-        with col_apply:
-            coord_json = st.text_area("Paste coordinates JSON here:", 
-                                     height=150, key="coord_json_input_step2",
-                                     placeholder='Click "Save Changes" in the viewer above, then copy the JSON from the yellow box and paste it here.',
-                                     help="After editing plots, click 'Save Changes' to get the JSON coordinates")
-            
-            if st.button("Save Changes", type="primary", use_container_width=True):
-                if coord_json and coord_json.strip():
-                    try:
-                        import json
-                        data = json.loads(coord_json)
-                        if isinstance(data, dict) and 'plots' in data:
-                            plots_data = data['plots']
-                        elif isinstance(data, list):
-                            plots_data = data
-                        else:
-                            plots_data = []
+        # Combined Save + Detect action
+        col_text, _ = st.columns([0.6, 0.4])
+        with col_text:
+            coord_json = st.text_area(
+                "Paste coordinates JSON here:",
+                height=110,
+                key="coord_json_input_step2",
+                placeholder='Click "Save Changes" in the viewer above, then copy the JSON from the yellow box and paste it here.',
+                help="After editing plots, click 'Save Changes' to get the JSON coordinates"
+            )
+        
+        # Left-aligned Save & Detect button (compact)
+        if st.button("Detect Coordinates", type="primary", use_container_width=False):
+            if coord_json and coord_json.strip():
+                try:
+                    import json
+                    data = json.loads(coord_json)
+                    if isinstance(data, dict) and 'plots' in data:
+                        plots_data = data['plots']
+                    elif isinstance(data, list):
+                        plots_data = data
+                    else:
+                        plots_data = []
+                    
+                    if plots_data:
+                        # Create a mapping of plot IDs from the saved data
+                        plot_dict = {p['id']: p for p in plots_data}
+                        updated_plot_ids = set(plot_dict.keys())
                         
-                        if plots_data:
-                            # Create a mapping of plot IDs from the saved data
-                            plot_dict = {p['id']: p for p in plots_data}
-                            updated_plot_ids = set(plot_dict.keys())
+                        # Create a mapping of plots by their corners (for matching after renumbering)
+                        def get_corner_key(corners):
+                            """Create a unique key from plot corners for matching"""
+                            if not corners:
+                                return None
+                            corner_list = []
+                            for label in ['A', 'B', 'C', 'D']:
+                                if label in corners:
+                                    corner_list.append((corners[label].get('x', 0), corners[label].get('y', 0)))
+                            return tuple(sorted(corner_list)) if corner_list else None
+                        
+                        # Build corner mapping from saved data
+                        saved_corner_map = {}
+                        for plot_data in plots_data:
+                            points = plot_data.get('points', [])
+                            if len(points) >= 3:
+                                corners = {}
+                                for i, label in enumerate(['A', 'B', 'C', 'D']):
+                                    if i < len(points):
+                                        corners[label] = {'x': int(points[i]['x']), 'y': int(points[i]['y'])}
+                                    else:
+                                        last_point = points[-1]
+                                        corners[label] = {'x': int(last_point['x']), 'y': int(last_point['y'])}
+                                corner_key = get_corner_key(corners)
+                                if corner_key:
+                                    saved_corner_map[corner_key] = plot_data
+                        
+                        existing_plot_ids = {p.get('plot_id') for p in st.session_state.plots}
+                        
+                        updated_count = 0
+                        added_count = 0
+                        deleted_count = 0
+                        
+                        # Track which plots were matched (by ID or by corners)
+                        matched_plot_ids = set()
+                        
+                        # Update existing plots - try to match by ID first, then by corners
+                        for plot in st.session_state.plots[:]:
+                            plot_id = plot.get('plot_id')
+                            matched = False
                             
-                            # Create a mapping of plots by their corners (for matching after renumbering)
-                            # This helps match plots even if plot_id changed
-                            def get_corner_key(corners):
-                                """Create a unique key from plot corners for matching"""
-                                if not corners:
-                                    return None
-                                corner_list = []
-                                for label in ['A', 'B', 'C', 'D']:
-                                    if label in corners:
-                                        corner_list.append((corners[label].get('x', 0), corners[label].get('y', 0)))
-                                return tuple(sorted(corner_list)) if corner_list else None
-                            
-                            # Build corner mapping from saved data
-                            saved_corner_map = {}
-                            for plot_data in plots_data:
-                                points = plot_data.get('points', [])
-                                if len(points) >= 3:
-                                    corners = {}
-                                    for i, label in enumerate(['A', 'B', 'C', 'D']):
-                                        if i < len(points):
-                                            corners[label] = {'x': int(points[i]['x']), 'y': int(points[i]['y'])}
-                                        else:
-                                            last_point = points[-1]
-                                            corners[label] = {'x': int(last_point['x']), 'y': int(last_point['y'])}
-                                    corner_key = get_corner_key(corners)
-                                    if corner_key:
-                                        saved_corner_map[corner_key] = plot_data
-                            
-                            existing_plot_ids = {p.get('plot_id') for p in st.session_state.plots}
-                            
-                            updated_count = 0
-                            added_count = 0
-                            deleted_count = 0
-                            
-                            # Track which plots were matched (by ID or by corners)
-                            matched_plot_ids = set()
-                            
-                            # Update existing plots - try to match by ID first, then by corners
-                            for plot in st.session_state.plots[:]:  # Use slice to allow modification
-                                plot_id = plot.get('plot_id')
-                                matched = False
-                                
-                                # Try matching by plot_id first
-                                if plot_id in plot_dict:
-                                    updated_plot = plot_dict[plot_id]
-                                    matched_plot_ids.add(plot_id)
+                            if plot_id in plot_dict:
+                                updated_plot = plot_dict[plot_id]
+                                matched_plot_ids.add(plot_id)
+                                matched = True
+                            else:
+                                plot_corners = plot.get('corners', {})
+                                corner_key = get_corner_key(plot_corners)
+                                if corner_key and corner_key in saved_corner_map:
+                                    updated_plot = saved_corner_map[corner_key]
+                                    matched_plot_ids.add(updated_plot.get('id'))
                                     matched = True
-                                else:
-                                    # Try matching by corners (in case plot_id changed during renumbering)
-                                    plot_corners = plot.get('corners', {})
-                                    corner_key = get_corner_key(plot_corners)
-                                    if corner_key and corner_key in saved_corner_map:
-                                        updated_plot = saved_corner_map[corner_key]
-                                        matched_plot_ids.add(updated_plot.get('id'))
-                                        matched = True
-                                
-                                if matched:
-                                    points = updated_plot.get('points', [])
-                                    
-                                    if len(points) >= 3:  # Allow 3+ points for any shape
-                                        # Update corners - ensure proper order (A, B, C, D)
-                                        # Handle plots with 3 or more points
-                                        corners = {}
-                                        corner_labels = ['A', 'B', 'C', 'D']
-                                        for i, label in enumerate(corner_labels):
-                                            if i < len(points):
-                                                corners[label] = {'x': int(points[i]['x']), 'y': int(points[i]['y'])}
-                                            else:
-                                                # If less than 4 points, duplicate last point
-                                                last_point = points[-1]
-                                                corners[label] = {'x': int(last_point['x']), 'y': int(last_point['y'])}
-                                        plot['corners'] = corners
-                                        
-                                        # CRITICAL: Also update plot_number and plot_id if provided in saved data
-                                        # This ensures renumbered plots are correctly reflected
-                                        if 'plot_number' in updated_plot:
-                                            new_plot_number = updated_plot.get('plot_number')
-                                            if new_plot_number is not None:
-                                                plot['plot_number'] = int(new_plot_number)
-                                        
-                                        # Update plot_id if it changed (e.g., after renumbering)
-                                        new_plot_id = updated_plot.get('id')
-                                        if new_plot_id and new_plot_id != plot_id:
-                                            # Update plot_id in the plot
-                                            plot['plot_id'] = new_plot_id
-                                            # Also update in plot_statuses if it exists
-                                            if plot_id in st.session_state.plot_statuses:
-                                                status = st.session_state.plot_statuses[plot_id]
-                                                st.session_state.plot_statuses[new_plot_id] = status
-                                                del st.session_state.plot_statuses[plot_id]
-                                        
-                                        updated_count += 1
                             
-                            # Remove deleted plots (plots that exist in session but not in saved data)
-                            # Use matched_plot_ids which includes both original IDs and new IDs after renumbering
-                            plots_to_remove = existing_plot_ids - matched_plot_ids
-                            if plots_to_remove:
-                                # Also remove from plot_statuses
-                                for removed_id in plots_to_remove:
-                                    if removed_id in st.session_state.plot_statuses:
-                                        del st.session_state.plot_statuses[removed_id]
-                                
-                                st.session_state.plots = [p for p in st.session_state.plots 
-                                                         if p.get('plot_id') not in plots_to_remove]
-                                deleted_count = len(plots_to_remove)
-                                print(f"🗑️ Removed {deleted_count} deleted plot(s): {list(plots_to_remove)}")
-                            
-                            # Add new plots (plots that exist in saved data but not matched to existing plots)
-                            plots_to_add = updated_plot_ids - matched_plot_ids
-                            for plot_id in plots_to_add:
-                                new_plot_data = plot_dict[plot_id]
-                                points = new_plot_data.get('points', [])
+                            if matched:
+                                points = updated_plot.get('points', [])
                                 
                                 if len(points) >= 3:
                                     corners = {}
@@ -2500,101 +2462,129 @@ elif current_step == 2:
                                         else:
                                             last_point = points[-1]
                                             corners[label] = {'x': int(last_point['x']), 'y': int(last_point['y'])}
+                                    plot['corners'] = corners
                                     
-                                    new_plot = {
-                                        'plot_id': new_plot_data.get('id', plot_id),
-                                        'plot_number': new_plot_data.get('plot_number', len(st.session_state.plots) + 1),
-                                        'corners': corners
-                                    }
-                                    st.session_state.plots.append(new_plot)
-                                    added_count += 1
+                                    if 'plot_number' in updated_plot:
+                                        new_plot_number = updated_plot.get('plot_number')
+                                        if new_plot_number is not None:
+                                            plot['plot_number'] = int(new_plot_number)
+                                    
+                                    new_plot_id = updated_plot.get('id')
+                                    if new_plot_id and new_plot_id != plot_id:
+                                        plot['plot_id'] = new_plot_id
+                                        if plot_id in st.session_state.plot_statuses:
+                                            status = st.session_state.plot_statuses[plot_id]
+                                            st.session_state.plot_statuses[new_plot_id] = status
+                                            del st.session_state.plot_statuses[plot_id]
+                                    
+                                    updated_count += 1
+                        
+                        # Remove deleted plots
+                        plots_to_remove = existing_plot_ids - matched_plot_ids
+                        if plots_to_remove:
+                            for removed_id in plots_to_remove:
+                                if removed_id in st.session_state.plot_statuses:
+                                    del st.session_state.plot_statuses[removed_id]
                             
-                            if updated_count > 0 or added_count > 0 or deleted_count > 0:
-                                # Regenerate image immediately
-                                if st.session_state.detection_image is not None:
-                                    original_img = st.session_state.detection_image.copy()
-                                    if len(original_img.shape) == 3:
-                                        height, width = original_img.shape[:2]
-                                        display_img = np.ones((height, width, 3), dtype=np.uint8) * 255
+                            st.session_state.plots = [p for p in st.session_state.plots 
+                                                     if p.get('plot_id') not in plots_to_remove]
+                            deleted_count = len(plots_to_remove)
+                        
+                        # Add new plots
+                        plots_to_add = updated_plot_ids - matched_plot_ids
+                        for plot_id in plots_to_add:
+                            new_plot_data = plot_dict[plot_id]
+                            points = new_plot_data.get('points', [])
+                            
+                            if len(points) >= 3:
+                                corners = {}
+                                corner_labels = ['A', 'B', 'C', 'D']
+                                for i, label in enumerate(corner_labels):
+                                    if i < len(points):
+                                        corners[label] = {'x': int(points[i]['x']), 'y': int(points[i]['y'])}
                                     else:
-                                        height, width = original_img.shape
-                                        display_img = np.ones((height, width, 3), dtype=np.uint8) * 255
-                                    
-                                    for plot in st.session_state.plots:
-                                        corners = plot.get('corners', {})
-                                        if not corners:
-                                            continue
-                                        
-                                        # Validate that all corners exist and have valid coordinates
-                                        required_corners = ['A', 'B', 'C', 'D']
-                                        if not all(corner in corners for corner in required_corners):
-                                            continue
-                                        
-                                        # Validate coordinates are numbers
-                                        try:
-                                            pts = np.array([
-                                                [int(corners['A']['x']), int(corners['A']['y'])],
-                                                [int(corners['B']['x']), int(corners['B']['y'])],
-                                                [int(corners['C']['x']), int(corners['C']['y'])],
-                                                [int(corners['D']['x']), int(corners['D']['y'])]
-                                            ], np.int32)
-                                        except (KeyError, ValueError, TypeError):
-                                            # Skip plots with invalid coordinates
-                                            continue
-                                        cv2.polylines(display_img, [pts], True, (0, 0, 255), 2)
-                                        cv2.circle(display_img, (corners['A']['x'], corners['A']['y']), 4, (0, 0, 255), -1)
-                                        cv2.circle(display_img, (corners['B']['x'], corners['B']['y']), 4, (0, 0, 255), -1)
-                                        cv2.circle(display_img, (corners['C']['x'], corners['C']['y']), 4, (0, 0, 255), -1)
-                                        cv2.circle(display_img, (corners['D']['x'], corners['D']['y']), 4, (0, 0, 255), -1)
-                                        # Draw plot number - use current plot number from session state
-                                        plot_number = plot.get('plot_number')
-                                        if plot_number is not None:
-                                            cx = sum([corners[c]['x'] for c in corners]) // 4
-                                            cy = sum([corners[c]['y'] for c in corners]) // 4
-                                            cv2.putText(display_img, str(plot_number),
-                                                       (cx-10, cy+5), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 0), 2)
-                                    
-                                    st.session_state.detection_image = display_img
-                                    st.session_state.detected_overlay_url = ndarray_to_data_url(display_img)
-                                    # Don't overwrite original_image_base64 - keep it for background toggle
-                                    # Only update if it was never set
-                                    if st.session_state.original_image_base64 is None:
-                                        st.session_state.original_image_base64 = ndarray_to_data_url(display_img)
-                                    st.session_state.brochure_overlay_url = st.session_state.detected_overlay_url
+                                        last_point = points[-1]
+                                        corners[label] = {'x': int(last_point['x']), 'y': int(last_point['y'])}
                                 
-                                # Create success message with all changes
-                                msg_parts = []
-                                if updated_count > 0:
-                                    msg_parts.append(f"updated {updated_count}")
-                                if added_count > 0:
-                                    msg_parts.append(f"added {added_count}")
-                                if deleted_count > 0:
-                                    msg_parts.append(f"deleted {deleted_count}")
+                                new_plot = {
+                                    'plot_id': new_plot_data.get('id', plot_id),
+                                    'plot_number': new_plot_data.get('plot_number', len(st.session_state.plots) + 1),
+                                    'corners': corners
+                                }
+                                st.session_state.plots.append(new_plot)
+                                added_count += 1
+                        
+                        # Regenerate image if any changes
+                        if updated_count > 0 or added_count > 0 or deleted_count > 0:
+                            if st.session_state.detection_image is not None:
+                                original_img = st.session_state.detection_image.copy()
+                                if len(original_img.shape) == 3:
+                                    height, width = original_img.shape[:2]
+                                    display_img = np.ones((height, width, 3), dtype=np.uint8) * 255
+                                else:
+                                    height, width = original_img.shape
+                                    display_img = np.ones((height, width, 3), dtype=np.uint8) * 255
                                 
-                                msg = f"✅ Applied changes: {', '.join(msg_parts)} plot(s)! The image has been regenerated."
-                                st.success(msg)
-                                st.session_state.coordinates_detected = True
-                                st.session_state.edits_made_in_step2 = True
-                                st.rerun()
-                            else:
-                                st.warning("No matching plots found to update. Make sure the plot IDs match.")
-                    except json.JSONDecodeError as e:
-                        st.error(f"Invalid JSON format: {e}")
-                    except Exception as e:
-                        st.error(f"Error applying coordinates: {e}")
-                        st.exception(e)
-                else:
-                    st.warning("⚠️ Please paste the coordinates JSON first. Click 'Save Changes' in the viewer to get it.")
-        
-        with col_detect:
-            if st.button("Detect Coordinates", type="primary", key="detect_coords", use_container_width=True,
-                        help="Click to mark coordinates as ready and proceed to next step"):
+                                for plot in st.session_state.plots:
+                                    corners = plot.get('corners', {})
+                                    if not corners:
+                                        continue
+                                    required_corners = ['A', 'B', 'C', 'D']
+                                    if not all(corner in corners for corner in required_corners):
+                                        continue
+                                    try:
+                                        pts = np.array([
+                                            [int(corners['A']['x']), int(corners['A']['y'])],
+                                            [int(corners['B']['x']), int(corners['B']['y'])],
+                                            [int(corners['C']['x']), int(corners['C']['y'])],
+                                            [int(corners['D']['x']), int(corners['D']['y'])]
+                                        ], np.int32)
+                                    except (KeyError, ValueError, TypeError):
+                                        continue
+                                    cv2.polylines(display_img, [pts], True, (0, 0, 255), 2)
+                                    cv2.circle(display_img, (corners['A']['x'], corners['A']['y']), 4, (0, 0, 255), -1)
+                                    cv2.circle(display_img, (corners['B']['x'], corners['B']['y']), 4, (0, 0, 255), -1)
+                                    cv2.circle(display_img, (corners['C']['x'], corners['C']['y']), 4, (0, 0, 255), -1)
+                                    cv2.circle(display_img, (corners['D']['x'], corners['D']['y']), 4, (0, 0, 255), -1)
+                                    plot_number = plot.get('plot_number')
+                                    if plot_number is not None:
+                                        cx = sum([corners[c]['x'] for c in corners]) // 4
+                                        cy = sum([corners[c]['y'] for c in corners]) // 4
+                                        cv2.putText(display_img, str(plot_number),
+                                                   (cx-10, cy+5), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 0), 2)
+                                
+                                st.session_state.detection_image = display_img
+                                st.session_state.detected_overlay_url = ndarray_to_data_url(display_img)
+                                if st.session_state.original_image_base64 is None:
+                                    st.session_state.original_image_base64 = ndarray_to_data_url(display_img)
+                                st.session_state.brochure_overlay_url = st.session_state.detected_overlay_url
+                            
+                            msg_parts = []
+                            if updated_count > 0:
+                                msg_parts.append(f"updated {updated_count}")
+                            if added_count > 0:
+                                msg_parts.append(f"added {added_count}")
+                            if deleted_count > 0:
+                                msg_parts.append(f"deleted {deleted_count}")
+                            msg = f"Applied changes: {', '.join(msg_parts)} plot(s)! The image has been regenerated."
+                            st.success(msg)
+                            st.session_state.coordinates_detected = True
+                            st.session_state.edits_made_in_step2 = True
+                            st.rerun()
+                        else:
+                            st.warning("No matching plots found to update. Make sure the plot IDs match.")
+                except json.JSONDecodeError as e:
+                    st.error(f"Invalid JSON format: {e}")
+                except Exception as e:
+                    st.error(f"Error applying coordinates: {e}")
+                    st.exception(e)
+            else:
+                # No JSON pasted; just mark as ready using current data
                 st.session_state.coordinates_detected = True
-                st.success("✅ Coordinates marked as ready! You can proceed to the next step.")
         
         # Show success message if coordinates are detected
         if st.session_state.get('coordinates_detected', False):
-            st.success("✅ Coordinates ready! You can proceed to the next step.")
+            st.success("Coordinates ready! You can proceed to the next step.")
         
         # Navigation buttons for Step 2
         col_btn1, col_btn2, col_btn3 = st.columns([8, 1, 1])
@@ -2681,7 +2671,7 @@ elif current_step == 3:
                     return ['background-color: #ffcccc'] * len(row)  # Light red background
                 return [''] * len(row)
             
-            with st.expander("🔍 View duplicates highlighted in red", expanded=True):
+            with st.expander(" View duplicates highlighted in red", expanded=True):
                 st.markdown("*Rows with duplicate plot numbers are highlighted in red:*")
                 st.dataframe(edited_df_processed.style.apply(highlight_duplicates, axis=1), use_container_width=True)
         else:
@@ -2771,7 +2761,7 @@ elif current_step == 3:
                 
                 # Reset geo_plots so user regenerates with consistent numbers
                 st.session_state.geo_plots = []
-                st.success("✅ Applied changes. The image will be updated in Step 4.")
+                st.success("Applied changes. The image will be updated in Step 4.")
                 st.rerun()
         with col_reset:
             if st.button("Revert Changes", type="primary"):
@@ -2967,7 +2957,7 @@ elif current_step == 4.5:
                 
                 # Reset geo_plots so user regenerates with consistent numbers
                 st.session_state.geo_plots = []
-                st.success("✅ Applied changes. The image has been regenerated and will be visible in Step 4.")
+                st.success(" Applied changes. The image has been regenerated and will be visible in Step 4.")
                 st.rerun()
         with col_reset:
             if st.button("Revert Changes", type="primary"):
@@ -2990,7 +2980,6 @@ elif current_step == 4.5:
 # STEP 5: Preview in Brochure
 elif current_step == 5:
     if st.session_state.plots:
-        st.write("**Interactive brochure preview with plot status controls:**")
 
         # Initialize plot statuses if not set
         for plot in st.session_state.plots:
@@ -3016,8 +3005,13 @@ elif current_step == 5:
         if not plot_overlay_url:
             st.warning("⚠️ No detected overlay available. Please run detection in Step 1 first.")
         
-        # Plot Status Controls
-        st.caption("Statuses are auto-assigned. Click below to randomize them anytime.")
+        # Plot Status Controls - visible note only
+        st.markdown(
+            '<div style="margin: 6px 0 12px 0; font-weight:600; color:#1f2937;">'
+            'Statuses are auto-assigned. Click below to randomize them anytime.'
+            '</div>',
+            unsafe_allow_html=True
+        )
         
         if st.button("Randomize plot statuses", type="primary", key="randomize_statuses"):
             for plot_id in st.session_state.plot_statuses:
@@ -3198,7 +3192,7 @@ elif current_step == 5:
                     pass
             
             # Add UI info
-            st.caption("💡 **Tip:** Click on any plot in the preview above to change its status. Colors: 🟢 Available (Green), 🔵 Booked (Blue), 🔴 Sold (Red). Changes are saved automatically.")
+            st.caption("**Note:** Click on any plot in the preview to change its status. Colors: 🟢 Available (Green), 🔵 Booked (Blue), 🔴 Sold (Red). Changes are saved automatically.")
             
             # Add controls panel for brochure viewer
             st.components.v1.html("""
@@ -3709,7 +3703,7 @@ elif current_step == 6:
                     ref_lat, ref_lon, st.session_state.px_to_ft
                 )
                 if st.session_state.geo_plots:
-                    st.success(f"✅ Generated map for {len(st.session_state.geo_plots)} plots!")
+                    st.success(f"Generated map for {len(st.session_state.geo_plots)} plots!")
         
         # Navigation buttons for Step 6
         if st.session_state.geo_plots:
@@ -3730,7 +3724,13 @@ elif current_step == 4:
 
 
     if st.session_state.plots:
-        st.write("**This preview shows the updated image based on any edits made in previous steps.**")
+        st.markdown(
+            '<div style="margin: 6px 0 12px 0; font-weight:600; color:#1f2937;">'
+            'This preview shows the updated image based on any edits made in previous steps.'
+            '</div>',
+            unsafe_allow_html=True
+        )
+      
         
         # Button to manually regenerate image from current plot coordinates
         if st.button("Regenerate Image", type="primary", use_container_width=False):
@@ -4108,21 +4108,9 @@ elif current_step == 8:
     if not st.session_state.plots:
         st.info("⚠️ Please complete the configuration steps in the 'Detection & Configuration' tab and generate the map first.")
     else:
-        # Header row with Total geo_plots and Configure Map Settings button
-        col_header1, col_header2 = st.columns([3, 1])
-        with col_header1:
-            if st.session_state.geo_plots:
-                st.write(f"**Total geo_plots:** {len(st.session_state.geo_plots)}")
-            else:
-                st.write("**Total geo_plots:** 0 (Configure map settings to generate)")
-        with col_header2:
-            # Initialize session state for showing config panel
-            if 'show_config_map_step8' not in st.session_state:
-                st.session_state.show_config_map_step8 = False
-            
-            if st.button("⚙️ Configure Map Settings", type="secondary", use_container_width=True, key="btn_config_map_step8"):
-                st.session_state.show_config_map_step8 = not st.session_state.show_config_map_step8
-                st.rerun()
+        # Initialize session state for showing config panel
+        if 'show_config_map_step8' not in st.session_state:
+            st.session_state.show_config_map_step8 = False
         
         # Show the configure map settings panel if button was clicked
         if st.session_state.get('show_config_map_step8', False):
@@ -4342,8 +4330,10 @@ elif current_step == 8:
         else:
             st.subheader("Map View")
             
-            # Add toggle for move mode
-            col_toggle, col_info = st.columns([1, 3])
+            # Top row: total count, move toggle, configure button (dark blue)
+            col_count, col_toggle, col_cfg = st.columns([1.2, 1.4, 1.0])
+            with col_count:
+                st.markdown(f"**Total geo_plots:** {len(st.session_state.geo_plots)}")
             with col_toggle:
                 move_mode_enabled = st.toggle(
                     "Enable Move Mode",
@@ -4352,12 +4342,10 @@ elif current_step == 8:
                     help="Enable to move all plots by clicking on the map. When enabled, click anywhere on the map to move all plots to that position."
                 )
                 st.session_state.move_plots_enabled = move_mode_enabled
-            
-            with col_info:
-                if st.session_state.get('move_plots_enabled', False):
-                    st.success("✅ **Move mode enabled!** Click anywhere on the map to move all plots to that position.")
-                else:
-                    st.caption("💡 Enable 'Move Mode' toggle, then click on the map to move all plots.")
+            with col_cfg:
+                if st.button("Configure Map Settings", type="primary", use_container_width=True, key="btn_config_map_step8"):
+                    st.session_state.show_config_map_step8 = not st.session_state.show_config_map_step8
+                    st.rerun()
             
             # Collect all valid coordinates from ALL plots for proper map bounds
             all_lats = []
@@ -4463,12 +4451,7 @@ elif current_step == 8:
                     plot_num = plot.get('plot_number', 'Unknown')
                     failed_plots.append((plot_num, str(e)))
                     print(f"⚠️ Failed to render Plot {plot_num}: {e}")
-            
-            # Display rendering results
-            if plots_added > 0:
-                st.success(f"✅ Successfully rendered {plots_added} plot(s) on the map!")
-            else:
-                st.error(f"❌ **No plots were rendered!** All {len(st.session_state.geo_plots)} plots failed validation.")
+
             
             # Display error summary if any plots failed
             if plots_failed > 0:
@@ -5838,4 +5821,5 @@ elif current_step == 8:
 
 st.divider()
 st.caption("🔧 Geo Plot Mapper ")
+
 

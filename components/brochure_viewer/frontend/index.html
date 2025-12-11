@@ -498,6 +498,106 @@
                     
                     console.log('Created plot group with', plotPolygonsArray.length, 'polygons at', window.plotGroup.left, window.plotGroup.top);
                 }
+                
+                // Add event handlers to the group to detect plot clicks
+                if (window.plotGroup) {
+                    console.log('Adding event handlers to group with', window.plotGroup.getObjects().length, 'polygons');
+                    console.log('Brochure canvas found with', window.plotGroup.getObjects().length, 'plots!');
+                    
+                    // Handle mouseover on group - find which polygon
+                    window.plotGroup.on('mousemove', function(e) {
+                        const pointer = canvas.getPointer(e.e);
+                        const groupObjects = window.plotGroup.getObjects();
+                        
+                        // Find polygon under pointer
+                        for (let i = 0; i < groupObjects.length; i++) {
+                            const obj = groupObjects[i];
+                            if (obj.plotId && obj.plotData) {
+                                // Convert pointer to group coordinates
+                                const groupPointer = fabric.util.transformPoint(
+                                    pointer,
+                                    fabric.util.invertTransform(window.plotGroup.calcTransformMatrix())
+                                );
+                                
+                                // Check if pointer is inside polygon
+                                if (obj.containsPoint(groupPointer)) {
+                                    // Visual feedback
+                                    obj.set({
+                                        strokeWidth: 3,
+                                        stroke: '#212121'
+                                    });
+                                    canvas.renderAll();
+                                    return;
+                                } else {
+                                    // Restore if not hovered
+                                    if (!(currentSelectedPlot && currentSelectedPlot.id === obj.plotData.id)) {
+                                        obj.set({
+                                            strokeWidth: 2,
+                                            stroke: statusBorders[obj.plotData.status] || '#424242'
+                                        });
+                                    }
+                                }
+                            }
+                        }
+                        canvas.renderAll();
+                    });
+                    
+                    // Handle click on group - find which polygon was clicked
+                    window.plotGroup.on('mousedown', function(e) {
+                        const pointer = canvas.getPointer(e.e);
+                        const groupObjects = window.plotGroup.getObjects();
+                        
+                        console.log('Group clicked, checking', groupObjects.length, 'polygons');
+                        
+                        // Find polygon under pointer
+                        for (let i = 0; i < groupObjects.length; i++) {
+                            const obj = groupObjects[i];
+                            if (obj.plotId && obj.plotData) {
+                                // Convert pointer to group coordinates
+                                const groupPointer = fabric.util.transformPoint(
+                                    pointer,
+                                    fabric.util.invertTransform(window.plotGroup.calcTransformMatrix())
+                                );
+                                
+                                // Check if pointer is inside polygon
+                                if (obj.containsPoint(groupPointer)) {
+                                    console.log('Clicked on plot:', obj.plotData.id);
+                                    
+                                    // If clicking the same plot, toggle the panel
+                                    if (currentSelectedPlot && currentSelectedPlot.id === obj.plotData.id) {
+                                        hidePlotInfo();
+                                        // Restore original appearance
+                                        obj.set({
+                                            strokeWidth: 2,
+                                            stroke: statusBorders[obj.plotData.status] || '#424242'
+                                        });
+                                    } else {
+                                        // Restore previous selected plot appearance if any
+                                        if (currentSelectedPolygon) {
+                                            const prevPlot = currentSelectedPlot;
+                                            currentSelectedPolygon.set({
+                                                strokeWidth: 2,
+                                                stroke: statusBorders[prevPlot.status] || '#424242'
+                                            });
+                                        }
+                                        
+                                        // Show info panel for clicked plot
+                                        showPlotInfo(obj.plotData, obj);
+                                        
+                                        // Update clicked plot appearance to show it's selected
+                                        obj.set({
+                                            strokeWidth: 3,
+                                            stroke: '#212121'
+                                        });
+                                    }
+                                    
+                                    canvas.renderAll();
+                                    return; // Stop after finding the first match
+                                }
+                            }
+                        }
+                    });
+                }
             }
 
             canvas.renderAll();
@@ -623,14 +723,21 @@
             infoPanel.style.display = 'none';
             
             // Restore selected plot appearance
-            if (currentSelectedPolygon) {
+            if (currentSelectedPolygon && currentSelectedPlot) {
                 const plot = currentSelectedPlot;
                 const originalFill = statusColors[plot.status] || statusColors['available'];
+                const originalStroke = statusBorders[plot.status] || statusBorders['available'];
                 currentSelectedPolygon.set({
                     fill: originalFill,
-                    strokeWidth: 5,
-                    stroke: '#424242'
+                    strokeWidth: 2,
+                    stroke: originalStroke
                 });
+                
+                // If polygon is in a group, mark group as dirty
+                if (window.plotGroup) {
+                    window.plotGroup.dirty = true;
+                }
+                
                 canvas.renderAll();
             }
             
@@ -657,12 +764,21 @@
             
             // Update polygon color
             const newColor = statusColors[newStatus] || statusColors['available'];
+            const newBorder = statusBorders[newStatus] || statusBorders['available'];
             currentSelectedPolygon.set({
-                fill: newColor
+                fill: newColor,
+                stroke: newBorder
             });
             
-            // Update stored original fill for hover restoration
-            currentSelectedPolygon.originalFill = newColor;
+            // Update the plotData reference so hover/click logic uses new status
+            if (currentSelectedPolygon.plotData) {
+                currentSelectedPolygon.plotData.status = newStatus;
+            }
+            
+            // If polygon is in a group, mark group as dirty to force re-render
+            if (window.plotGroup) {
+                window.plotGroup.dirty = true;
+            }
             
             canvas.renderAll();
             
@@ -687,8 +803,10 @@
             console.log(`Plot ${plotId} status updated from ${oldStatus} to ${newStatus}`);
         }
         
-        // Make updatePlotStatus available globally
+        // Make functions available globally
         window.updatePlotStatus = updatePlotStatus;
+        window.hidePlotInfo = hidePlotInfo;
+        window.showPlotInfo = showPlotInfo;
 
 
         // Handle canvas resize

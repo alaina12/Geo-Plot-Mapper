@@ -2677,9 +2677,9 @@ elif current_step == 3:
         else:
             st.success("✓ No duplicate plot numbers found")
         
-        col_apply, col_reset = st.columns([1, 1])
-        with col_apply:
-            if st.button("Save Changes", type="primary"):
+        col_save, col_revert, col_spacer = st.columns([1, 1, 6])
+        with col_save:
+            if st.button("Save Changes", type="primary", use_container_width=True):
                 # Apply edited numbers and coordinates back to session_state.plots
                 plot_updates = {}
                 for _, row in edited_df_processed.iterrows():
@@ -2763,8 +2763,8 @@ elif current_step == 3:
                 st.session_state.geo_plots = []
                 st.success("Applied changes. The image will be updated in Step 4.")
                 st.rerun()
-        with col_reset:
-            if st.button("Revert Changes", type="primary"):
+        with col_revert:
+            if st.button("Revert Changes", type="primary", use_container_width=True):
                 st.info("Reverted UI edits. The table reflects current values from detection.")
                 st.rerun()
         
@@ -3538,7 +3538,7 @@ elif current_step == 5:
                                 e.preventDefault();
                                 e.stopPropagation();
                                 try {
-                                    const moveAmount = parseFloat(moveYInput?.value) || 10;
+                                    const moveAmount = 10; // Fixed increment amount
                                     iframeWindow.currentOffsetY = (iframeWindow.currentOffsetY || 0) - moveAmount;
                                     if (moveYInput) moveYInput.value = iframeWindow.currentOffsetY;
                                     applyTransform();
@@ -3554,7 +3554,7 @@ elif current_step == 5:
                                 e.preventDefault();
                                 e.stopPropagation();
                                 try {
-                                    const moveAmount = parseFloat(moveYInput?.value) || 10;
+                                    const moveAmount = 10; // Fixed increment amount
                                     iframeWindow.currentOffsetY = (iframeWindow.currentOffsetY || 0) + moveAmount;
                                     if (moveYInput) moveYInput.value = iframeWindow.currentOffsetY;
                                     applyTransform();
@@ -3570,7 +3570,7 @@ elif current_step == 5:
                                 e.preventDefault();
                                 e.stopPropagation();
                                 try {
-                                    const moveAmount = parseFloat(moveXInput?.value) || 10;
+                                    const moveAmount = 10; // Fixed increment amount
                                     iframeWindow.currentOffsetX = (iframeWindow.currentOffsetX || 0) - moveAmount;
                                     if (moveXInput) moveXInput.value = iframeWindow.currentOffsetX;
                                     applyTransform();
@@ -3586,7 +3586,7 @@ elif current_step == 5:
                                 e.preventDefault();
                                 e.stopPropagation();
                                 try {
-                                    const moveAmount = parseFloat(moveXInput?.value) || 10;
+                                    const moveAmount = 10; // Fixed increment amount
                                     iframeWindow.currentOffsetX = (iframeWindow.currentOffsetX || 0) + moveAmount;
                                     if (moveXInput) moveXInput.value = iframeWindow.currentOffsetX;
                                     applyTransform();
@@ -3796,10 +3796,12 @@ elif current_step == 4:
             st.session_state.detected_overlay_url = ndarray_to_data_url(display_img)
             st.session_state.brochure_overlay_url = st.session_state.detected_overlay_url
             
-            # Display the regenerated image
-            st.image(display_img, channels="BGR",
-                    caption=f"{len(st.session_state.plots)} plots with updated coordinates (red lines and dots)",
-                    use_container_width=True)
+            # Display the regenerated image - centered and sized for clear visibility
+            col1, col2, col3 = st.columns([1, 2.5, 1])
+            with col2:
+                st.image(display_img, channels="BGR",
+                        caption=f"{len(st.session_state.plots)} plots with updated coordinates (red lines and dots)",
+                        use_container_width=True)
         else:
             st.warning("⚠️ No detection image available. Please go back to Step 1 and detect plots.")
         
@@ -4159,9 +4161,9 @@ elif current_step == 8:
                     with col2b:
                         ref_lon = st.number_input("Longitude", value=77.0001, format="%.6f", key="config_lon_step8")
                 
-                col_apply, col_close = st.columns([1, 1])
+                col_spacer, col_close, col_apply = st.columns([4, 1, 1])
                 with col_apply:
-                    if st.button("🗺️ Generate Map", type="primary", use_container_width=False, key="generate_map_step8"):
+                    if st.button("🗺️ Generate Map", type="primary", use_container_width=True, key="generate_map_step8"):
                         with st.spinner("Calculating coordinates and regenerating map..."):
                             st.session_state.geo_plots = calculate_geocoordinates(
                                 st.session_state.plots, ref_plot_id, ref_corner,
@@ -4175,7 +4177,7 @@ elif current_step == 8:
                                 st.error("❌ Failed to generate map. Please check your settings.")
                 
                 with col_close:
-                    if st.button("❌ Close", use_container_width=False, key="close_config_step8"):
+                    if st.button("❌ Close", use_container_width=True, key="close_config_step8"):
                         st.session_state.show_config_map_step8 = False
                         st.rerun()
                 
@@ -5821,5 +5823,6 @@ elif current_step == 8:
 
 st.divider()
 st.caption("🔧 Geo Plot Mapper ")
+
 
 

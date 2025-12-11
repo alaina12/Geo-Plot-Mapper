@@ -172,28 +172,28 @@
             white-space: nowrap;
         }
         .save-button {
-            background-color: #0066CC;
+            background-color: #007bff;  /* Primary blue */
         }
         .save-button:hover {
-            background-color: #0052a3;
+            background-color: #0056b3;
         }
         .merge-button {
-            background-color: #FF9800;
+            background-color: #ffc107;  /* Warning orange */
         }
         .merge-button:hover {
-            background-color: #F57C00;
+            background-color: #e0a800;
         }
         .create-button {
-            background-color: #4CAF50;
+            background-color: #28a745;  /* Success green */
         }
         .create-button:hover {
-            background-color: #45a049;
+            background-color: #218838;
         }
         .delete-button {
-            background-color: #f44336;
+            background-color: #dc3545;  /* Danger red */
         }
         .delete-button:hover {
-            background-color: #d32f2f;
+            background-color: #c82333;
         }
         .number-dialog {
             position: fixed;
@@ -367,7 +367,7 @@
         <button class="merge-button" id="merge-btn">Merge Points</button>
         <button class="create-button" id="create-btn">Create Plot</button>
         <button class="delete-button" id="delete-btn">Delete Plot</button>
-        <button class="save-button" id="move-dots-btn" style="background-color: #2196F3;" title="Ctrl+Click on dots to select them (green), then click this button">Move Selected Dots</button>
+        <button class="save-button" id="move-dots-btn" style="background-color: #17a2b8;" title="Ctrl+Click on dots to select them (green), then click this button">Move Selected Dots</button>
     </div>
     
     <!-- Help Tooltip -->
@@ -1563,10 +1563,10 @@
                 const count = selectedDotsForMove.length;
                 if (count > 0) {
                     moveDotsBtn.textContent = `Move Selected Dots (${count})`;
-                    moveDotsBtn.style.backgroundColor = '#4CAF50'; // Green when dots selected
+                    moveDotsBtn.style.backgroundColor = '#28a745'; // Success green when dots selected
                 } else {
                     moveDotsBtn.textContent = 'Move Selected Dots';
-                    moveDotsBtn.style.backgroundColor = '#2196F3'; // Blue when none selected
+                    moveDotsBtn.style.backgroundColor = '#17a2b8'; // Info blue when none selected
                 }
             }
         }

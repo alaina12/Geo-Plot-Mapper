@@ -6,4 +6,3 @@ streamlit-folium
 Pillow
 google-generativeai
 pytesseract
-streamlit-drawable-canvas

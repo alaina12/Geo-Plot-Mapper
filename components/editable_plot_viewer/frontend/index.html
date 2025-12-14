@@ -445,8 +445,30 @@
             height: initialHeight,
             backgroundColor: '#ffffff',
             selection: true,
-            allowTouchScrolling: false
+            allowTouchScrolling: false,
+            renderOnAddRemove: true,
+            stateful: false,  // Disable stateful caching for accurate coordinates
+            preserveObjectStacking: true  // Preserve object order for proper layering
         });
+        
+        // CRITICAL: Disable object caching globally to prevent selection offset
+        if (fabric.Object && fabric.Object.prototype) {
+            fabric.Object.prototype.objectCaching = false;
+            fabric.Object.prototype.statefullCache = false;
+            fabric.Object.prototype.noScaleCache = true;
+        }
+        
+        // Ensure canvas element dimensions match DOM size exactly
+        const canvasEl = canvas.getElement();
+        if (canvasEl) {
+            canvasEl.width = initialWidth;
+            canvasEl.height = initialHeight;
+            canvasEl.style.width = initialWidth + 'px';
+            canvasEl.style.height = initialHeight + 'px';
+        }
+        
+        // CRITICAL: Recalculate offset to ensure pointer calculations respect zoom/pan
+        canvas.calcOffset();
         
         // Pan/drag support when zoomed - synchronized movement for all layers
         let isPanning = false;
@@ -505,6 +527,15 @@
                 
                 // Re-enable rendering and render once
                 canvas.renderOnAddRemove = true;
+                
+                // CRITICAL: Recalculate canvas offset after panning to ensure pointer calculations remain accurate
+                canvas.calcOffset();
+                
+                // CRITICAL: Update all object coordinates to ensure selection boxes align correctly after panning
+                canvas.getObjects().forEach(obj => {
+                    obj.setCoords();
+                });
+                
                 canvas.requestRenderAll();
                 
                 // Update last position
@@ -625,11 +656,24 @@
                 const containerWidth = container.clientWidth || 1200;
                 const containerHeight = container.clientHeight || 800;
                 
-                // Update canvas dimensions to match container
+                // Update canvas dimensions to match container exactly
+                // This ensures pointer calculations are accurate
                 canvas.setDimensions({
                     width: containerWidth,
                     height: containerHeight
+                }, {
+                    backstoreOnly: false  // Update both backstore and frontstore
                 });
+                
+                // Ensure canvas element matches dimensions
+                const canvasElement = canvas.getElement();
+                if (canvasElement) {
+                    canvasElement.width = containerWidth;
+                    canvasElement.height = containerHeight;
+                }
+                
+                // Recalculate offset to ensure pointer calculations respect zoom/pan
+                canvas.calcOffset();
                 
                 // Calculate bounds of all plots to ensure they all fit
                 let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
@@ -709,6 +753,10 @@
                 
                 // Add background as a REGULAR OBJECT (not backgroundImage) so it moves with everything
                 // This ensures perfect synchronization during pan operations
+                // CRITICAL: Background image scaling should NOT affect coordinate space
+                // The coordinate space is independent of background image transformations
+                // All coordinate calculations use stored scale/offset values from circles, not background image
+                // CRITICAL: Background image is non-selectable and should not be re-scaled after initialization
                 bgImg.set({
                     scaleX: scale,
                     scaleY: scale,
@@ -716,12 +764,22 @@
                     top: imageOffsetY,
                     originX: 'left',
                     originY: 'top',
-                    selectable: false,
-                    evented: false,
-                    isBackgroundImage: true  // Custom flag to identify it
+                    selectable: false,  // CRITICAL: Non-selectable
+                    evented: false,     // CRITICAL: Non-interactive
+                    isBackgroundImage: true,  // Custom flag to identify it
+                    objectCaching: false,     // Disable caching for accurate coordinate handling
+                    noScaleCache: true,      // Disable scale cache
+                    statefullCache: false,   // Disable stateful cache
+                    lockMovementX: true,      // CRITICAL: Lock movement
+                    lockMovementY: true,     // CRITICAL: Lock movement
+                    lockRotation: true,      // CRITICAL: Lock rotation
+                    lockScalingX: true,      // CRITICAL: Lock scaling (don't re-scale after init)
+                    lockScalingY: true       // CRITICAL: Lock scaling (don't re-scale after init)
                 });
                 
-                // Store original values for zoom
+                // CRITICAL: Store original values for coordinate calculations
+                // These original values are used as fallback when no circles exist
+                // This ensures background image transformations (zoom/pan) don't affect coordinate space
                 bgImg.originalScaleX = scale;
                 bgImg.originalScaleY = scale;
                 bgImg.originalLeft = imageOffsetX;
@@ -733,6 +791,30 @@
                 
                 // Also set as canvas.backgroundImage reference for compatibility
                 window.canvasBgImg = bgImg;
+                
+                // Set initial visibility to true (background shown by default)
+                bgImg.set('visible', true);
+                
+                // Listen for background toggle messages from parent
+                window.addEventListener('message', function(event) {
+                    // Accept messages from same origin or from Streamlit parent
+                    if (event.data && event.data.type === 'toggle_background') {
+                        const showBackground = event.data.show;
+                        if (window.canvasBgImg) {
+                            window.canvasBgImg.set('visible', showBackground);
+                            canvas.renderAll();
+                            console.log('Background visibility toggled:', showBackground);
+                        }
+                    }
+                });
+                
+                // Expose function to toggle background (for direct access if needed)
+                window.toggleBackground = function(show) {
+                    if (window.canvasBgImg) {
+                        window.canvasBgImg.set('visible', show !== false);
+                        canvas.renderAll();
+                    }
+                };
 
                 // Add plot polygons/points after background loads with the overall offset
                 addPlotElements(scale, offsetX, offsetY);
@@ -804,7 +886,7 @@
                     const circle = new fabric.Circle({
                         left: point.x,
                         top: point.y,
-                        radius: 6,
+                        radius: 4,
                         fill: '#FF0000', // Red
                         stroke: '#FFFFFF',
                         strokeWidth: 2,
@@ -822,30 +904,12 @@
                         originalY: originalPoints[pointIndex].y,
                         scale: scale,
                         offsetX: offsetX,
-                        offsetY: offsetY
+                        offsetY: offsetY,
+                        objectCaching: false,     // Disable caching for accurate coordinate handling
+                        noScaleCache: true,      // Disable scale cache
+                        statefullCache: false    // Disable stateful cache
                     });
 
-                    // Make circles draggable - lines follow the dots
-                    circle.on('moving', function() {
-                        // Update polygon in real-time if in lines mode
-                        if (mode === 'lines') {
-                            const polygon = plotObjects.find(p => p.plotId === plot.id);
-                            if (polygon) {
-                                const circles = plotPoints[plot.id];
-                                const newPoints = circles.map(c => ({
-                                    x: c.left,
-                                    y: c.top
-                                }));
-                                polygon.points = newPoints;
-                                polygon.dirty = true;
-                                
-                                // Ensure circles stay on top during drag
-                                circles.forEach(c => canvas.bringToFront(c));
-                            }
-                        }
-                        canvas.renderAll();
-                    });
-                    
                     // Track if circle was moved (to distinguish click from drag)
                     let circleMoved = false;
                     let circleMouseDownTime = 0;
@@ -856,6 +920,34 @@
                         selectable: true,  // Allow selection for dragging
                         hoverCursor: 'pointer',
                         perPixelTargetFind: true  // Better click detection
+                    });
+                    
+                    // Make circles draggable - lines follow the dots
+                    circle.on('moving', function(e) {
+                        circleMoved = true; // Track that circle was moved
+                        
+                        // Update original coordinates when circle is moved
+                        // Use the scale and offset stored when the circle was created
+                        // This ensures consistency even if background image position changes
+                        const storedScale = this.scale || 1;
+                        const storedOffsetX = this.offsetX || 0;
+                        const storedOffsetY = this.offsetY || 0;
+                        
+                        // Calculate original coordinates using the stored scale/offset
+                        // This ensures coordinates are always relative to the original image
+                        this.originalX = Math.round((this.left - storedOffsetX) / storedScale);
+                        this.originalY = Math.round((this.top - storedOffsetY) / storedScale);
+                        
+                        // CRITICAL: Update selection box coordinates to prevent offset
+                        // Must call setCoords() to ensure selection boxes align correctly
+                        this.setCoords();
+                        
+                        // CRITICAL: Update polygon in real-time if in lines mode
+                        // updatePolygon uses absolute left/top of circles, ensuring points stay attached
+                        if (mode === 'lines') {
+                            updatePolygon(plot.id);
+                        }
+                        canvas.renderAll();
                     });
                     
                     // Add click handler for merge mode, create mode, and plot selection
@@ -933,15 +1025,10 @@
                             canvas.renderAll();
                             return false;
                         } else if (!createMode && !mergeMode) {
-                            // Allow plot selection - will be confirmed on mouseup if not dragged
-                            e.e.stopPropagation();
-                            e.e.stopImmediatePropagation();
+                            // Allow normal Fabric.js selection and dragging for dots
+                            // Don't stop propagation - let Fabric.js handle selection and dragging
+                            // Plot selection will be handled in mouseup if it was just a click (not drag)
                         }
-                    });
-                    
-                    // Track movement to distinguish click from drag
-                    circle.on('moving', function() {
-                        circleMoved = true;
                     });
                     
                     // Handle mouseup for plot selection (only if not dragged)
@@ -977,7 +1064,20 @@
 
                 // If mode is "lines", also draw the polygon lines
                 if (mode === 'lines') {
-                    const polygon = new fabric.Polygon(points, {
+                    // Calculate bounding box to set polygon position
+                    const minX = Math.min(...points.map(p => p.x));
+                    const minY = Math.min(...points.map(p => p.y));
+                    
+                    // Convert points to relative coordinates (relative to minX, minY)
+                    // This ensures the polygon stays anchored at its position
+                    const relativePoints = points.map(point => ({
+                        x: point.x - minX,
+                        y: point.y - minY
+                    }));
+                    
+                    const polygon = new fabric.Polygon(relativePoints, {
+                        left: minX,
+                        top: minY,
                         fill: 'rgba(255, 0, 0, 0.01)', // Very light fill to make it more clickable
                         stroke: '#FF0000', // Red lines
                         strokeWidth: 2,
@@ -989,9 +1089,15 @@
                         plotNumber: plot.plot_number,
                         hasControls: false,
                         hasBorders: false,
-                        objectCaching: false, // Disable caching for smooth real-time updates
+                        objectCaching: false,  // Disable caching for accurate coordinate handling
+                        noScaleCache: true,    // Disable scale cache
+                        statefullCache: false, // Disable stateful cache
                         perPixelTargetFind: true // Better click detection
                     });
+                    
+                    // Store original position to keep polygon anchored when points move
+                    polygon.originalLeft = minX;
+                    polygon.originalTop = minY;
                     
                     // Add click handler for plot selection (always available, not just in delete mode)
                     polygon.on('mousedown', function(e) {
@@ -1020,7 +1126,21 @@
                         circle.on('modified', function() {
                             updatePolygon(plot.id);
                         });
-                        circle.on('moving', function() {
+                        circle.on('moving', function(e) {
+                            // Update original coordinates when circle is moved
+                            const storedScale = this.scale || 1;
+                            const storedOffsetX = this.offsetX || 0;
+                            const storedOffsetY = this.offsetY || 0;
+                            
+                            this.originalX = Math.max(0, Math.round((this.left - storedOffsetX) / storedScale));
+                            this.originalY = Math.max(0, Math.round((this.top - storedOffsetY) / storedScale));
+                            
+                            // CRITICAL: Update selection box coordinates to prevent offset
+                            // Must call setCoords() to ensure selection boxes align correctly
+                            this.setCoords();
+                            
+                            // CRITICAL: Update polygon in real-time
+                            // updatePolygon uses absolute left/top of circles, ensuring points stay attached
                             updatePolygon(plot.id);
                         });
                     });
@@ -1053,8 +1173,15 @@
                     originY: 'center',
                     selectable: false,
                     evented: false,
-                    plotId: plot.id
+                    plotId: plot.id,
+                    objectCaching: false,  // Disable caching for accurate coordinate handling
+                    noScaleCache: true,   // Disable scale cache
+                    statefullCache: false // Disable stateful cache
                 });
+                
+                // Store original position for zoom functionality
+                text.originalLeft = centerX;
+                text.originalTop = centerY;
                 canvas.add(text);
                 
                 // Bring circles and text to front
@@ -1078,18 +1205,61 @@
             const polygon = plotObjects.find(p => p.plotId === plotId);
             if (!polygon) return;
 
-            const newPoints = circles.map(circle => ({
-                x: circle.left,
-                y: circle.top
+            // CRITICAL: Use absolute left/top of circles for polygon points
+            // Do NOT apply zoom or scaling math manually - use actual circle positions
+            const newPoints = circles.map(circle => {
+                // Get absolute canvas coordinates directly from circle objects
+                // These are the actual canvas positions, respecting all transformations
+                return {
+                    x: circle.left,  // CRITICAL: Use absolute left directly
+                    y: circle.top    // CRITICAL: Use absolute top directly
+                };
+            });
+            
+            // Calculate bounding box to set polygon position
+            const minX = Math.min(...newPoints.map(p => p.x));
+            const minY = Math.min(...newPoints.map(p => p.y));
+            
+            // Convert to relative coordinates (relative to bounding box minimum)
+            const relativePoints = newPoints.map(point => ({
+                x: point.x - minX,
+                y: point.y - minY
             }));
-
-            polygon.set({ points: newPoints });
+            
+            // Store original position if not set (for anchoring)
+            if (polygon.originalLeft === undefined || polygon.originalTop === undefined) {
+                polygon.originalLeft = minX;
+                polygon.originalTop = minY;
+            }
+            
+            // CRITICAL: Update polygon with relative points and position
+            // Position comes from circles' absolute left/top, not manual calculations
+            polygon.set({
+                points: relativePoints,
+                left: minX,  // From circles' absolute positions
+                top: minY,   // From circles' absolute positions
+                visible: true,
+                opacity: 0.7
+            });
+            
+            // Update original position to track current position
+            polygon.originalLeft = minX;
+            polygon.originalTop = minY;
+            
+            // CRITICAL: Recalculate coordinates to ensure selection boxes align correctly
+            polygon.setCoords();
+            polygon.dirty = true;
+            
+            // CRITICAL: Update all circle coordinates to ensure selection boxes align correctly
+            circles.forEach(circle => {
+                circle.setCoords();
+                canvas.bringToFront(circle);
+            });
             
             // Ensure proper layering is maintained
             if (canvas.backgroundImage) {
                 canvas.backgroundImage.moveTo(0);
             }
-            circles.forEach(circle => canvas.bringToFront(circle));
             
             canvas.renderAll();
         }
@@ -1098,23 +1268,25 @@
             // Collect updated coordinates - include all plots (existing, new, and handle deletions)
             const updatedPlots = [];
             
-            // Get the background image to calculate proper scale and offset
-            const bgImg = canvas.backgroundImage;
+            // Get scale and offset from circles (stored when they were created)
+            // This ensures we use the same transformation that was used to position circles
             let bgScale = 1;
             let bgOffsetX = 0;
             let bgOffsetY = 0;
             
-            if (bgImg) {
-                bgScale = bgImg.scaleX || 1;
-                bgOffsetX = bgImg.left || 0;
-                bgOffsetY = bgImg.top || 0;
+            const allCircles = Object.values(plotPoints).flat();
+            if (allCircles.length > 0) {
+                // Use the scale/offset stored in circles (consistent across all circles)
+                bgScale = allCircles[0].scale || 1;
+                bgOffsetX = allCircles[0].offsetX || 0;
+                bgOffsetY = allCircles[0].offsetY || 0;
             } else {
-                // Fallback to stored values from circles
-                const allCircles = Object.values(plotPoints).flat();
-                if (allCircles.length > 0) {
-                    bgScale = allCircles[0].scale || 1;
-                    bgOffsetX = allCircles[0].offsetX || 0;
-                    bgOffsetY = allCircles[0].offsetY || 0;
+                // Fallback to background image if no circles exist
+                const bgImg = canvas.backgroundImage;
+                if (bgImg) {
+                    bgScale = bgImg.scaleX || 1;
+                    bgOffsetX = bgImg.left || 0;
+                    bgOffsetY = bgImg.top || 0;
                 }
             }
             
@@ -1127,15 +1299,28 @@
                 }
 
                 // Convert canvas coordinates back to original pixel coordinates
-                // Account for transformations applied by user
+                // Always use stored originalX/originalY which are updated during movement
+                // These represent the true original image coordinates
                 const updatedPoints = circles.map(circle => {
-                    // Get current canvas position
-                    let canvasX = circle.left;
-                    let canvasY = circle.top;
+                    let originalX, originalY;
                     
-                    // Convert from canvas coordinates to original image coordinates
-                    const originalX = Math.round((canvasX - bgOffsetX) / bgScale);
-                    const originalY = Math.round((canvasY - bgOffsetY) / bgScale);
+                    // Always use stored original coordinates if available
+                    // These are updated in real-time when circles are moved
+                    if (circle.originalX !== undefined && circle.originalY !== undefined) {
+                        originalX = circle.originalX;
+                        originalY = circle.originalY;
+                    } else {
+                        // Fallback: calculate from current canvas position
+                        // This should only happen for circles that haven't been moved
+                        let canvasX = circle.left;
+                        let canvasY = circle.top;
+                        originalX = Math.round((canvasX - bgOffsetX) / bgScale);
+                        originalY = Math.round((canvasY - bgOffsetY) / bgScale);
+                        
+                        // Store for future use
+                        circle.originalX = originalX;
+                        circle.originalY = originalY;
+                    }
                     
                     return {
                         x: Math.max(0, originalX), // Ensure non-negative
@@ -1806,16 +1991,37 @@
             // If we have selected existing circles, we can create additional points
             // If no existing circles selected, create new points as before
             
-            const pointer = canvas.getPointer(options.e);
-            const bgImg = canvas.backgroundImage;
+            // CRITICAL: Use getPointer with absolute coordinates (true parameter)
+            // This respects canvas zoom/pan transformations and ensures accurate pointer calculations
+            const pointer = canvas.getPointer(options.e, true);
+            
+            // CRITICAL: Use the same scale/offset as existing plots (stored in circles)
+            // Background image scaling does NOT affect coordinate space - we use stored values from circles
+            // This ensures consistency - new plots use the same coordinate system as existing ones
             let scale = 1;
             let offsetX = 0;
             let offsetY = 0;
             
-            if (bgImg) {
-                scale = bgImg.scaleX || 1;
-                offsetX = bgImg.left || 0;
-                offsetY = bgImg.top || 0;
+            // Get scale/offset from existing circles if available
+            // CRITICAL: Always prefer stored values from circles, not background image transformations
+            const allExistingCircles = Object.values(plotPoints).flat();
+            if (allExistingCircles.length > 0) {
+                // Use the stored scale/offset from existing circles (consistent across all)
+                // These values are independent of background image scaling
+                scale = allExistingCircles[0].scale || 1;
+                offsetX = allExistingCircles[0].offsetX || 0;
+                offsetY = allExistingCircles[0].offsetY || 0;
+            } else {
+                // Fallback to background image original values if no existing circles
+                // Use originalScaleX/originalLeft to avoid zoom/pan transformations affecting coordinates
+                const bgImg = window.canvasBgImg || canvas.backgroundImage;
+                if (bgImg) {
+                    // Use original values, not current transformed values
+                    // This ensures background image scaling doesn't affect coordinate space
+                    scale = bgImg.originalScaleX || bgImg.scaleX || 1;
+                    offsetX = bgImg.originalLeft || bgImg.left || 0;
+                    offsetY = bgImg.originalTop || bgImg.top || 0;
+                }
             }
             
             // Check if the new point is too close to existing points (prevent interconnection)
@@ -1851,10 +2057,14 @@
             }
             
             // Create a new point - ensure it's on top of everything
+            // Calculate original coordinates from canvas pointer position
+            const originalX = Math.round((pointer.x - offsetX) / scale);
+            const originalY = Math.round((pointer.y - offsetY) / scale);
+            
             const circle = new fabric.Circle({
                 left: pointer.x,
                 top: pointer.y,
-                radius: 6,
+                radius: 4,
                 fill: '#0000FF', // Blue for new points
                 stroke: '#FFFFFF',
                 strokeWidth: 2,
@@ -1871,12 +2081,33 @@
                 scale: scale,
                 offsetX: offsetX,
                 offsetY: offsetY,
+                originalX: originalX,  // Store original coordinates immediately
+                originalY: originalY,  // Store original coordinates immediately
                 evented: true,
                 hoverCursor: 'move',
-                moveCursor: 'move'
+                moveCursor: 'move',
+                objectCaching: false,     // Disable caching for accurate coordinate handling
+                noScaleCache: true,      // Disable scale cache
+                statefullCache: false    // Disable stateful cache
             });
             
-            circle.on('moving', function() {
+            circle.on('moving', function(e) {
+                // Update original coordinates when circle is moved
+                // Use the scale and offset stored when the circle was created
+                // This ensures consistency even if background image position changes
+                const storedScale = this.scale || 1;
+                const storedOffsetX = this.offsetX || 0;
+                const storedOffsetY = this.offsetY || 0;
+                
+                // Calculate original coordinates using the stored scale/offset
+                // This ensures coordinates are always relative to the original image
+                this.originalX = Math.round((this.left - storedOffsetX) / storedScale);
+                this.originalY = Math.round((this.top - storedOffsetY) / storedScale);
+                
+                // Update selection box coordinates to prevent offset
+                // CRITICAL: Must call setCoords() to ensure selection boxes align correctly
+                this.setCoords();
+                
                 canvas.renderAll();
             });
             
@@ -2082,23 +2313,44 @@
                 return;
             }
             
-            // Convert points to original coordinates
-            const bgImg = canvas.backgroundImage;
+            // Use the same scale/offset as existing plots (stored in circles)
+            // This ensures consistency - new plots use the same coordinate system as existing ones
             let scale = 1;
             let offsetX = 0;
             let offsetY = 0;
             
-            if (bgImg) {
-                scale = bgImg.scaleX || 1;
-                offsetX = bgImg.left || 0;
-                offsetY = bgImg.top || 0;
+            // Get scale/offset from existing circles if available
+            const allExistingCircles = Object.values(plotPoints).flat();
+            if (allExistingCircles.length > 0) {
+                // Use the stored scale/offset from existing circles (consistent across all)
+                scale = allExistingCircles[0].scale || 1;
+                offsetX = allExistingCircles[0].offsetX || 0;
+                offsetY = allExistingCircles[0].offsetY || 0;
+            } else {
+                // Fallback to background image if no existing circles
+                const bgImg = canvas.backgroundImage;
+                if (bgImg) {
+                    scale = bgImg.scaleX || 1;
+                    offsetX = bgImg.left || 0;
+                    offsetY = bgImg.top || 0;
+                }
             }
             
             // Order points properly (clockwise or counter-clockwise) to avoid X-shaped polygons
             // Combine both selected existing circles and new points
             const points = allPoints.map(circle => {
-                const originalX = Math.round((circle.left - offsetX) / scale);
-                const originalY = Math.round((circle.top - offsetY) / scale);
+                // For all circles (existing and new), use their stored original coordinates
+                // New circles should have originalX/originalY set when created
+                let originalX, originalY;
+                if (circle.originalX !== undefined && circle.originalY !== undefined) {
+                    // Use stored original coordinates (most accurate)
+                    originalX = circle.originalX;
+                    originalY = circle.originalY;
+                } else {
+                    // Fallback: convert from canvas coordinates to original using stored scale/offset
+                    originalX = Math.round((circle.left - offsetX) / scale);
+                    originalY = Math.round((circle.top - offsetY) / scale);
+                }
                 return { 
                     x: originalX, 
                     y: originalY,
@@ -2258,20 +2510,39 @@
                 mergeCommonPoints(pendingPlotData.canvasPoints, commonPoints);
                 
                 // Recalculate points after merging
-                const bgImg = canvas.backgroundImage;
+                // Use the same scale/offset as existing plots (stored in circles)
                 let scale = 1;
                 let offsetX = 0;
                 let offsetY = 0;
                 
-                if (bgImg) {
-                    scale = bgImg.scaleX || 1;
-                    offsetX = bgImg.left || 0;
-                    offsetY = bgImg.top || 0;
+                // Get scale/offset from existing circles if available
+                const allExistingCircles = Object.values(plotPoints).flat();
+                if (allExistingCircles.length > 0) {
+                    scale = allExistingCircles[0].scale || 1;
+                    offsetX = allExistingCircles[0].offsetX || 0;
+                    offsetY = allExistingCircles[0].offsetY || 0;
+                } else {
+                    // Fallback to background image if no existing circles
+                    const bgImg = canvas.backgroundImage;
+                    if (bgImg) {
+                        scale = bgImg.scaleX || 1;
+                        offsetX = bgImg.left || 0;
+                        offsetY = bgImg.top || 0;
+                    }
                 }
                 
                 pendingPlotData.points = pendingPlotData.canvasPoints.map(circle => {
-                    const originalX = Math.round((circle.left - offsetX) / scale);
-                    const originalY = Math.round((circle.top - offsetY) / scale);
+                    // For all circles (existing and new), use their stored original coordinates
+                    let originalX, originalY;
+                    if (circle.originalX !== undefined && circle.originalY !== undefined) {
+                        // Use stored original coordinates (most accurate)
+                        originalX = circle.originalX;
+                        originalY = circle.originalY;
+                    } else {
+                        // Fallback: convert from canvas coordinates to original using stored scale/offset
+                        originalX = Math.round((circle.left - offsetX) / scale);
+                        originalY = Math.round((circle.top - offsetY) / scale);
+                    }
                     return { x: originalX, y: originalY };
                 });
             }
@@ -2291,25 +2562,48 @@
             plotsData.sort((a, b) => (a.plot_number || 0) - (b.plot_number || 0));
             
             // Reorder circles to match the sorted order (using canvas coordinates)
-            const bgImg = canvas.backgroundImage;
+            // Use the same scale/offset as existing plots (stored in circles)
             let scale = 1;
             let offsetX = 0;
             let offsetY = 0;
             
-            if (bgImg) {
-                scale = bgImg.scaleX || 1;
-                offsetX = bgImg.left || 0;
-                offsetY = bgImg.top || 0;
+            // Get scale/offset from existing circles if available
+            const allExistingCircles = Object.values(plotPoints).flat();
+            if (allExistingCircles.length > 0) {
+                scale = allExistingCircles[0].scale || 1;
+                offsetX = allExistingCircles[0].offsetX || 0;
+                offsetY = allExistingCircles[0].offsetY || 0;
+            } else {
+                // Fallback to background image if no existing circles
+                const bgImg = canvas.backgroundImage;
+                if (bgImg) {
+                    scale = bgImg.scaleX || 1;
+                    offsetX = bgImg.left || 0;
+                    offsetY = bgImg.top || 0;
+                }
             }
             
             // Create points with canvas coordinates for sorting
-            const pointsWithCanvas = pendingPlotData.canvasPoints.map(circle => ({
-                x: Math.round((circle.left - offsetX) / scale),
-                y: Math.round((circle.top - offsetY) / scale),
-                canvasX: circle.left,
-                canvasY: circle.top,
-                circle: circle
-            }));
+            const pointsWithCanvas = pendingPlotData.canvasPoints.map(circle => {
+                // For all circles (existing and new), use their stored original coordinates
+                let originalX, originalY;
+                if (circle.originalX !== undefined && circle.originalY !== undefined) {
+                    // Use stored original coordinates (most accurate)
+                    originalX = circle.originalX;
+                    originalY = circle.originalY;
+                } else {
+                    // Fallback: convert from canvas coordinates to original using stored scale/offset
+                    originalX = Math.round((circle.left - offsetX) / scale);
+                    originalY = Math.round((circle.top - offsetY) / scale);
+                }
+                return {
+                    x: originalX,
+                    y: originalY,
+                    canvasX: circle.left,
+                    canvasY: circle.top,
+                    circle: circle
+                };
+            });
             
             // Sort points in clockwise order around their centroid
             const centerX = pointsWithCanvas.reduce((sum, p) => sum + p.canvasX, 0) / pointsWithCanvas.length;
@@ -2379,8 +2673,21 @@
             if (mode === 'lines') {
                 // Use the reordered circles for polygon points
                 const circlesForPolygon = reorderedCircles;
-                const polygonPoints = circlesForPolygon.map(c => ({ x: c.left, y: c.top }));
-                const polygon = new fabric.Polygon(polygonPoints, {
+                const absolutePoints = circlesForPolygon.map(c => ({ x: c.left, y: c.top }));
+                
+                // Calculate bounding box to set polygon position
+                const minX = Math.min(...absolutePoints.map(p => p.x));
+                const minY = Math.min(...absolutePoints.map(p => p.y));
+                
+                // Convert to relative coordinates (relative to bounding box minimum)
+                const relativePoints = absolutePoints.map(point => ({
+                    x: point.x - minX,
+                    y: point.y - minY
+                }));
+                
+                const polygon = new fabric.Polygon(relativePoints, {
+                    left: minX,
+                    top: minY,
                     fill: 'transparent',
                     stroke: '#FF0000',
                     strokeWidth: 2,
@@ -2391,8 +2698,14 @@
                     plotNumber: assignedNumber,
                     hasControls: false,
                     hasBorders: false,
-                    objectCaching: false // Disable caching for smooth real-time updates
+                    objectCaching: false,  // Disable caching for accurate coordinate handling
+                    noScaleCache: true,    // Disable scale cache
+                    statefullCache: false  // Disable stateful cache
                 });
+                
+                // Store original position for reference
+                polygon.originalLeft = minX;
+                polygon.originalTop = minY;
                 
                 // Add click handler for delete mode
                 polygon.on('mousedown', function(e) {
@@ -2404,20 +2717,22 @@
                 
                 // Add event handlers for real-time polygon updates
                 circlesForPolygon.forEach(circle => {
-                    circle.on('moving', function() {
-                        // Update polygon in real-time
-                        const circles = plotPoints[newPlot.id];
-                        if (circles && polygon) {
-                            const newPoints = circles.map(c => ({
-                                x: c.left,
-                                y: c.top
-                            }));
-                            polygon.points = newPoints;
-                            polygon.dirty = true;
-                            
-                            // Ensure circles stay on top during drag
-                            circles.forEach(c => canvas.bringToFront(c));
-                        }
+                    circle.on('moving', function(e) {
+                        // Update original coordinates when circle is moved
+                        const storedScale = this.scale || 1;
+                        const storedOffsetX = this.offsetX || 0;
+                        const storedOffsetY = this.offsetY || 0;
+                        
+                        this.originalX = Math.max(0, Math.round((this.left - storedOffsetX) / storedScale));
+                        this.originalY = Math.max(0, Math.round((this.top - storedOffsetY) / storedScale));
+                        
+                        // Update selection box coordinates to prevent offset
+                        // CRITICAL: Must call setCoords() to ensure selection boxes align correctly
+                        this.setCoords();
+                        
+                        // Update polygon in real-time using updatePolygon function
+                        // This ensures proper coordinate handling with absolute left/top
+                        updatePolygon(newPlot.id);
                         canvas.renderAll();
                     });
                     
@@ -2433,8 +2748,9 @@
                 }
                 
                 // Add plot number label
-                const centerX = polygonPoints.reduce((sum, p) => sum + p.x, 0) / polygonPoints.length;
-                const centerY = polygonPoints.reduce((sum, p) => sum + p.y, 0) / polygonPoints.length;
+                // Use absolutePoints to calculate center (these are the actual canvas coordinates)
+                const centerX = absolutePoints.reduce((sum, p) => sum + p.x, 0) / absolutePoints.length;
+                const centerY = absolutePoints.reduce((sum, p) => sum + p.y, 0) / absolutePoints.length;
                 const text = new fabric.Text(String(assignedNumber), {
                     left: centerX,
                     top: centerY,
@@ -2444,16 +2760,56 @@
                     originY: 'center',
                     selectable: false,
                     evented: false,
-                    plotId: newPlot.id
+                    plotId: newPlot.id,
+                    visible: true,  // Ensure text is visible immediately
+                    objectCaching: false,  // Disable caching for accurate coordinate handling
+                    noScaleCache: true,   // Disable scale cache
+                    statefullCache: false // Disable stateful cache
                 });
+                
+                // Store original position for zoom functionality
+                text.originalLeft = centerX;
+                text.originalTop = centerY;
                 canvas.add(text);
                 
                 // Bring circles and text to front (above polygon)
                 circlesForPolygon.forEach(circle => canvas.bringToFront(circle));
                 canvas.bringToFront(text);
+                
+                // Force immediate render to show plot number
+                canvas.renderAll();
             } else {
-                // In points mode, ensure circles are on top
+                // In points mode, also add plot number label
+                // Calculate center from circle positions
+                const centerX = reorderedCircles.reduce((sum, c) => sum + c.left, 0) / reorderedCircles.length;
+                const centerY = reorderedCircles.reduce((sum, c) => sum + c.top, 0) / reorderedCircles.length;
+                const text = new fabric.Text(String(assignedNumber), {
+                    left: centerX,
+                    top: centerY,
+                    fontSize: 14,
+                    fill: '#000000',
+                    originX: 'center',
+                    originY: 'center',
+                    selectable: false,
+                    evented: false,
+                    plotId: newPlot.id,
+                    visible: true,  // Ensure text is visible immediately
+                    objectCaching: false,  // Disable caching for accurate coordinate handling
+                    noScaleCache: true,   // Disable scale cache
+                    statefullCache: false // Disable stateful cache
+                });
+                
+                // Store original position for zoom functionality
+                text.originalLeft = centerX;
+                text.originalTop = centerY;
+                canvas.add(text);
+                
+                // Ensure circles and text are on top
                 reorderedCircles.forEach(circle => canvas.bringToFront(circle));
+                canvas.bringToFront(text);
+                
+                // Force immediate render to show plot number
+                canvas.renderAll();
             }
             
             // Reset selected existing circles to their original color
@@ -2471,7 +2827,24 @@
             newPlotPoints = [];
             selectedExistingCircles = [];
             pendingPlotData = null;
-            enableCreateMode(); // Disable create mode
+            
+            // CRITICAL: Explicitly disable create mode (don't toggle, just disable)
+            if (createMode) {
+                createMode = false;
+                const createBtn = document.getElementById('create-btn');
+                const deleteBtn = document.getElementById('delete-btn');
+                if (createBtn) {
+                    createBtn.textContent = 'Create Plot';
+                    createBtn.style.backgroundColor = '#4CAF50';
+                }
+                canvas.defaultCursor = 'default';
+                canvas.hoverCursor = 'default';
+                canvas.off('mouse:down', handleCreatePlotClick);
+                canvas.selection = true;
+                if (deleteBtn) deleteBtn.style.opacity = '1';
+            }
+            
+            // Force immediate render to show plot number
             canvas.renderAll();
             
             console.log('New plot created with number:', assignedNumber, newPlot);
@@ -3147,9 +3520,31 @@
             const containerWidth = Math.max(container.clientWidth - 20, 800);
             const containerHeight = Math.max(container.clientHeight - 20, 600);
             
+            // CRITICAL: Update canvas dimensions to match DOM container size exactly
+            // This ensures pointer calculations are accurate and fixes iframe resize issues
             canvas.setDimensions({
                 width: containerWidth,
                 height: containerHeight
+            }, {
+                backstoreOnly: false  // Update both backstore and frontstore
+            });
+            
+            // CRITICAL: Ensure canvas element matches DOM container dimensions exactly
+            const canvasElement = canvas.getElement();
+            if (canvasElement) {
+                canvasElement.width = containerWidth;
+                canvasElement.height = containerHeight;
+                canvasElement.style.width = containerWidth + 'px';
+                canvasElement.style.height = containerHeight + 'px';
+            }
+            
+            // CRITICAL: Recalculate offset to ensure pointer calculations respect zoom/pan
+            // This must be called after any dimension change
+            canvas.calcOffset();
+            
+            // CRITICAL: Update all object coordinates to ensure selection boxes align correctly
+            canvas.getObjects().forEach(obj => {
+                obj.setCoords();
             });
             
             canvas.renderAll();
@@ -3170,40 +3565,16 @@
         function applyCanvasViewZoom(zoomLevel) {
             canvasViewZoom = Math.max(0.4, Math.min(5.0, zoomLevel)); // Expanded range: 0.4x to 5x
             
-            // Calculate canvas center point
-            const centerX = canvas.width / 2;
-            const centerY = canvas.height / 2;
+            // CRITICAL: Use canvas.zoomToPoint() instead of manually scaling objects
+            // This ensures proper coordinate handling and prevents drift
+            const centerPoint = new fabric.Point(canvas.width / 2, canvas.height / 2);
+            canvas.zoomToPoint(centerPoint, canvasViewZoom);
             
-            // Zoom ALL objects (including background) from center in unified way
+            // CRITICAL: Recalculate canvas offset after zoom to ensure pointer calculations remain accurate
+            canvas.calcOffset();
+            
+            // CRITICAL: Update all object coordinates to ensure selection boxes align correctly
             canvas.getObjects().forEach(obj => {
-                // Store original values if not stored
-                if (!obj.originalScaleX) {
-                    obj.originalScaleX = obj.scaleX || 1;
-                    obj.originalScaleY = obj.scaleY || 1;
-                    obj.originalLeft = obj.left || 0;
-                    obj.originalTop = obj.top || 0;
-                    obj.originalRadius = obj.radius || 6;
-                }
-                
-                // Calculate new position to keep center fixed
-                const newLeft = centerX - (centerX - obj.originalLeft) * canvasViewZoom;
-                const newTop = centerY - (centerY - obj.originalTop) * canvasViewZoom;
-                
-                // Apply zoom from center (same logic for all objects including background)
-                if (obj.type === 'circle') {
-                    obj.set({
-                        radius: obj.originalRadius * canvasViewZoom,
-                        left: newLeft,
-                        top: newTop
-                    });
-                } else {
-                    obj.set({
-                        scaleX: obj.originalScaleX * canvasViewZoom,
-                        scaleY: obj.originalScaleY * canvasViewZoom,
-                        left: newLeft,
-                        top: newTop
-                    });
-                }
                 obj.setCoords();
             });
             
@@ -3231,25 +3602,16 @@
         function resetCanvasZoom() {
             canvasViewZoom = 1.0;
             
-            // Reset ALL objects (including background) uniformly
+            // CRITICAL: Use canvas.setZoom() to reset zoom properly
+            const centerPoint = new fabric.Point(canvas.width / 2, canvas.height / 2);
+            canvas.zoomToPoint(centerPoint, 1.0);
+            
+            // CRITICAL: Recalculate canvas offset after zoom reset
+            canvas.calcOffset();
+            
+            // CRITICAL: Update all object coordinates to ensure selection boxes align correctly
             canvas.getObjects().forEach(obj => {
-                if (obj.originalScaleX) {
-                    if (obj.type === 'circle') {
-                        obj.set({
-                            radius: obj.originalRadius,
-                            left: obj.originalLeft,
-                            top: obj.originalTop
-                        });
-                    } else {
-                        obj.set({
-                            scaleX: obj.originalScaleX,
-                            scaleY: obj.originalScaleY,
-                            left: obj.originalLeft,
-                            top: obj.originalTop
-                        });
-                    }
-                    obj.setCoords();
-                }
+                obj.setCoords();
             });
             
             const zoomValueEl = document.getElementById('zoom-value');

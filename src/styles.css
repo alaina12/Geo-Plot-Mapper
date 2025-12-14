@@ -72,8 +72,8 @@ body.step-1-active [data-testid="stToolbar"] svg {
     margin-left: -50vw !important;
     margin-right: -50vw !important;
     margin-top: -10px !important;
-    margin-bottom: 60px !important;
-    padding: 40px 20px 80px 20px !important;
+    margin-bottom: 25px !important;
+    padding: 25px 20px 35px 20px !important;
     background: linear-gradient(135deg, #1e3c72 0%, #2a5298 100%) !important;
     text-align: center !important;
     box-shadow: 0 2px 8px rgba(0,0,0,0.15) !important;
@@ -81,7 +81,7 @@ body.step-1-active [data-testid="stToolbar"] svg {
     display: flex !important;
     align-items: center !important;
     justify-content: center !important;
-    min-height: 200px !important;
+    min-height: 110px !important;
 }
 
 /* Ensure headings and content are visible on all steps */
@@ -176,9 +176,9 @@ body.step-1-active div[data-testid="stFileUploader"] {
     box-shadow: 0 4px 16px rgba(0, 0, 0, 0.08), 
                 0 2px 4px rgba(0, 0, 0, 0.04),
                 inset 0 1px 0 rgba(255, 255, 255, 0.5) !important;
-    padding: 20px 30px !important;
-    margin-top: -40px !important;
-    margin-bottom: 20px !important;
+    padding: 18px 30px !important;
+    margin-top: -20px !important;
+    margin-bottom: 15px !important;
     overflow: visible !important;
 }
 

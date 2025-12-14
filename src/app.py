@@ -1,4 +1,4 @@
-# app2.py - Contour-Based Plot Detection with Sequential Numbering
+# app.py 
 import streamlit as st
 import streamlit.components.v1 as components
 import cv2
@@ -24,103 +24,20 @@ parent_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if parent_dir not in sys.path:
     sys.path.insert(0, parent_dir)
 
-# Import brochure_viewer function - robust import with multiple fallbacks
-import inspect
-import importlib
-import importlib.util
-
-brochure_viewer = None
-editable_plot_viewer = None
-
-# Method 1: Try package import (preferred)
+# Import custom components
 try:
     from components.brochure_viewer import brochure_viewer
-    if inspect.isfunction(brochure_viewer):
-        pass  # Success!
-    elif inspect.ismodule(brochure_viewer):
-        # Got module instead, try to get function from it
-        brochure_viewer = getattr(brochure_viewer, 'brochure_viewer', None)
-except (ImportError, AttributeError) as e:
-    pass
-
-# Method 2: If Method 1 failed, try direct module import using importlib
-if not inspect.isfunction(brochure_viewer):
-    try:
-        mod = importlib.import_module('components.brochure_viewer.brochure_viewer')
-        brochure_viewer = getattr(mod, 'brochure_viewer', None)
-    except (ImportError, AttributeError) as e:
-        pass
-
-# Method 3: Last resort - try importing the module file directly
-if not inspect.isfunction(brochure_viewer):
-    try:
-        import sys
-        import os
-        mod_path = os.path.join(parent_dir, 'components', 'brochure_viewer', 'brochure_viewer.py')
-        if os.path.exists(mod_path):
-            spec = importlib.util.spec_from_file_location("brochure_viewer_module", mod_path)
-            if spec and spec.loader:
-                mod = importlib.util.module_from_spec(spec)
-                spec.loader.exec_module(mod)
-                brochure_viewer = getattr(mod, 'brochure_viewer', None)
-    except Exception as e:
-        pass
-
-# Final verification
-if not inspect.isfunction(brochure_viewer):
+except ImportError as e:
     raise ImportError(
-        f"Failed to import brochure_viewer function. "
-        f"Tried all import methods. Got: {type(brochure_viewer)}"
+        f"Failed to import brochure_viewer. "
+        f"Make sure the components directory is in the project root. Error: {e}"
     )
 
-# Import editable_plot_viewer function - robust import with multiple fallbacks
 try:
     from components.editable_plot_viewer import editable_plot_viewer
-    if inspect.isfunction(editable_plot_viewer):
-        pass  # Success!
-    elif inspect.ismodule(editable_plot_viewer):
-        editable_plot_viewer = getattr(editable_plot_viewer, 'editable_plot_viewer', None)
-except (ImportError, AttributeError) as e:
-    pass
-
-if not inspect.isfunction(editable_plot_viewer):
-    try:
-        mod = importlib.import_module('components.editable_plot_viewer.editable_plot_viewer')
-        editable_plot_viewer = getattr(mod, 'editable_plot_viewer', None)
-    except (ImportError, AttributeError) as e:
-        pass
-
-if not inspect.isfunction(editable_plot_viewer):
-    try:
-        mod_path = os.path.join(parent_dir, 'components', 'editable_plot_viewer', 'editable_plot_viewer.py')
-        if os.path.exists(mod_path):
-            spec = importlib.util.spec_from_file_location("editable_plot_viewer_module", mod_path)
-            if spec and spec.loader:
-                mod = importlib.util.module_from_spec(spec)
-                spec.loader.exec_module(mod)
-                editable_plot_viewer = getattr(mod, 'editable_plot_viewer', None)
-    except Exception as e:
-        pass
-
-if not inspect.isfunction(editable_plot_viewer):
-    st.warning("⚠️ Failed to import editable_plot_viewer. Editing functionality may not work.")
-try:
-    from streamlit_drawable_canvas import st_canvas  # type: ignore
-    # Patch image_to_url function early to avoid compatibility issues
-    # Always override to ensure it accepts any number of arguments
-    try:
-        import streamlit.elements.image as st_image
-        def image_to_url(image, *args, **kwargs):
-            """Workaround for missing or incompatible image_to_url in newer Streamlit versions."""
-            buffered = BytesIO()
-            image.save(buffered, format="PNG")
-            img_str = base64.b64encode(buffered.getvalue()).decode()
-            return f"data:image/png;base64,{img_str}"
-        st_image.image_to_url = image_to_url
-    except:
-        pass
-except ImportError:
-    st_canvas = None
+except ImportError as e:
+    st.warning(f"⚠️ Failed to import editable_plot_viewer. Editing functionality may not work. Error: {e}")
+    editable_plot_viewer = None
 
 # --- CORE DETECTION FUNCTIONS ---
 
@@ -203,76 +120,12 @@ def detect_all_numbers_in_image(image):
                 final_numbers.append((number, x, y))
                 used_positions.add((number, x, y))
         
-        print(f"✅ OCR detected {len(final_numbers)} numbers: {sorted([n for n, x, y in final_numbers])}")
+        print(f"OCR detected {len(final_numbers)} numbers: {sorted([n for n, x, y in final_numbers])}")
         return final_numbers
         
     except Exception as e:
         print(f"OCR error: {e}")
         return []
-
-
-def detect_background_type(image_bytes):
-    """
-    Detects if the uploaded image has a white background (even with plots on it)
-    or a colored/non-white background.
-    Returns: 'white' if white background, 'colored' if non-white background
-    """
-    try:
-        nparr = np.frombuffer(image_bytes, np.uint8)
-        img = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
-        
-        if img is None:
-            return 'white'  # Default to white if can't decode
-        
-        # Convert to RGB
-        img_rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
-        
-        # Sample pixels from edges (background is usually visible at edges)
-        h, w = img_rgb.shape[:2]
-        edge_samples = []
-        
-        # Sample top edge (wider sample for better detection)
-        edge_samples.extend(img_rgb[0, :].reshape(-1, 3))
-        # Sample bottom edge
-        edge_samples.extend(img_rgb[h-1, :].reshape(-1, 3))
-        # Sample left edge
-        edge_samples.extend(img_rgb[:, 0].reshape(-1, 3))
-        # Sample right edge
-        edge_samples.extend(img_rgb[:, w-1].reshape(-1, 3))
-        
-        # Also sample a few pixels inward from edges (to avoid plot boundaries)
-        if h > 20 and w > 20:
-            edge_samples.extend(img_rgb[5, :].reshape(-1, 3))  # 5px from top
-            edge_samples.extend(img_rgb[h-6, :].reshape(-1, 3))  # 5px from bottom
-            edge_samples.extend(img_rgb[:, 5].reshape(-1, 3))  # 5px from left
-            edge_samples.extend(img_rgb[:, w-6].reshape(-1, 3))  # 5px from right
-        
-        edge_samples = np.array(edge_samples)
-        
-        # Calculate average RGB values of edge pixels
-        avg_r = np.mean(edge_samples[:, 0])
-        avg_g = np.mean(edge_samples[:, 1])
-        avg_b = np.mean(edge_samples[:, 2])
-        
-        # Check if average is close to white (all channels > 240)
-        is_white = (avg_r > 240) and (avg_g > 240) and (avg_b > 240)
-        
-        # Also check variance - white backgrounds have low variance
-        variance = np.var(edge_samples.flatten())
-        
-        # Check percentage of very bright pixels (> 250 in all channels)
-        bright_pixels = np.sum((edge_samples[:, 0] > 250) & (edge_samples[:, 1] > 250) & (edge_samples[:, 2] > 250))
-        bright_percentage = (bright_pixels / len(edge_samples)) * 100
-        
-        # If average is white AND variance is low AND most pixels are bright, it's a white background
-        if is_white and variance < 500 and bright_percentage > 70:
-            return 'white'
-        else:
-            return 'colored'
-            
-    except Exception as e:
-        print(f"Error detecting background: {e}")
-        return 'white'  # Default to white on error
 
 
 def point_in_polygon(px, py, corners):
@@ -1054,28 +907,6 @@ def calculate_geocoordinates(plots, ref_plot_id, ref_corner, ref_lat, ref_lon, p
     return plots_with_latlon
 
 
-def recalculate_coordinates_from_pixel(ref_lat, ref_lon, ref_x, ref_y, new_x, new_y, px_to_ft):
-    """
-    Recalculates lat/lon from pixel coordinates using the same formula as calculate_geocoordinates.
-    """
-    FT_TO_M = 0.3048
-    EARTH_RADIUS_M = 6371000
-    ref_lat_rad = math.radians(ref_lat)
-    m_per_deg_lat = 111132
-    m_per_deg_lon = (math.pi / 180) * EARTH_RADIUS_M * math.cos(ref_lat_rad)
-    
-    lat_deg_per_px = (1 / m_per_deg_lat) * FT_TO_M * px_to_ft
-    lon_deg_per_px = (1 / m_per_deg_lon) * FT_TO_M * px_to_ft
-    
-    origin_lat = ref_lat + (ref_y * lat_deg_per_px)
-    origin_lon = ref_lon - (ref_x * lon_deg_per_px)
-    
-    calculated_lat = origin_lat - (new_y * lat_deg_per_px)
-    calculated_lon = origin_lon + (new_x * lon_deg_per_px)
-    
-    return calculated_lat, calculated_lon
-
-
 def recalculate_pixel_from_coordinates(ref_lat, ref_lon, ref_x, ref_y, new_lat, new_lon, px_to_ft):
     """
     Recalculates pixel coordinates from lat/lon using the same formula as calculate_geocoordinates.
@@ -1387,10 +1218,6 @@ def renumber_plots_sequentially(plots, selected_plot_id, direction, numbering_mo
                 print(f"      Row {row_idx}: {plot_data['plot']['plot_id']} → {current_number}")
                 current_number += 1
             
-            # STEP 3: Determine column order for remaining columns
-            # Strategy: After Plot 2's column, continue in the specified direction
-            # For "Move Right" (direction='left'), if Plot 2 is at rightmost (col 8),
-            # the natural continuation is to move LEFT (7, 6, 5, 4, 3, 2, 1, 0)
             
             if direction == 'left':
                 # "Move Right" was selected, but Plot 2 is already at the rightmost column
@@ -1502,50 +1329,6 @@ def renumber_plots_sequentially(plots, selected_plot_id, direction, numbering_mo
         print(f"\n Renumbered ALL plots: 1 to {current_number - 1}")
     
     return plots
-
-
-def create_brochure_canvas_image():
-    """
-    Builds a colored brochure-style preview image using detected plots.
-    """
-    if not st.session_state.plots or st.session_state.detection_image is None:
-        return None
-
-    base_img = st.session_state.detection_image.copy()
-    palette = [
-        (60, 155, 60),   # deep green
-        (70, 90, 200),   # blue
-        (50, 80, 180),   # teal/blue
-        (60, 60, 200),   # purple/blue
-        (40, 40, 160),   # darker blue
-        (50, 140, 210),  # cyan
-        (60, 170, 120),  # greenish
-        (60, 70, 230),   # violet
-    ]
-    # Add warm overlay to mimic brochure texture
-    warm_overlay = np.full_like(base_img, (50, 110, 60))
-    base_img = cv2.addWeighted(base_img, 0.2, warm_overlay, 0.8, 0)
-
-    sorted_plots = sorted(
-        st.session_state.plots,
-        key=lambda p: p['plot_number'] if p['plot_number'] is not None else 9999
-    )
-
-    for idx, plot in enumerate(sorted_plots):
-        if not plot.get('corners'):
-            continue
-        corners = plot['corners']
-        pts = np.array([
-            [corners['A']['x'], corners['A']['y']],
-            [corners['B']['x'], corners['B']['y']],
-            [corners['C']['x'], corners['C']['y']],
-            [corners['D']['x'], corners['D']['y']]
-        ], np.int32)
-        fill_color = palette[idx % len(palette)]
-        cv2.fillPoly(base_img, [pts], fill_color)
-        cv2.polylines(base_img, [pts], True, (255, 255, 255), 2)
-
-    return Image.fromarray(cv2.cvtColor(base_img, cv2.COLOR_BGR2RGB))
 
 
 def pil_image_to_base64(image):
@@ -1729,6 +1512,8 @@ if 'original_uploaded_image_base64' not in st.session_state:
     st.session_state.original_uploaded_image_base64 = None
 if 'edits_made_in_step2' not in st.session_state:
     st.session_state.edits_made_in_step2 = False
+if 'show_next_warning_step2' not in st.session_state:
+    st.session_state.show_next_warning_step2 = False
 
 # Workflow Sidebar - Modern UI with Streamlit buttons (working click navigation)
 with st.sidebar:
@@ -1874,7 +1659,7 @@ if current_step == 1:
             <h1 style="
                 color: white;
                 font-weight: bold;
-                font-size: 2.8rem;
+                font-size: 2.2rem;
                 margin: 0 auto;
                 padding: 0;
                 text-shadow: 0 2px 4px rgba(0,0,0,0.3);
@@ -1885,18 +1670,10 @@ if current_step == 1:
     </div>
     """, unsafe_allow_html=True)
 
-# CSS is now loaded from external file (styles.css) at the top of the script
-
-# ========================================
-# DATABASE MODAL HANDLER - Now in sidebar
-# ========================================
-# Database functionality has been moved to sidebar expander above
-
-# PAGE FLOW BASED ON CURRENT STEP
-# STEP 1: Upload Layout Image (only shows upload section, no tabs, no config)
+# STEP 1: Upload Layout Image
 if current_step == 1:
     # Add spacing after header
-    st.markdown("<div style='height: 40px;'></div>", unsafe_allow_html=True)
+    st.markdown("<div style='height: 20px;'></div>", unsafe_allow_html=True)
     
     # Custom label for upload section
     st.markdown("""
@@ -1904,7 +1681,7 @@ if current_step == 1:
         color: #4a5568;
         font-size: 16px;
         font-weight: 600;
-        margin-bottom: 15px;
+        margin-bottom: 10px;
         margin-left: 0;
     "></div>
     """, unsafe_allow_html=True)
@@ -1914,7 +1691,7 @@ if current_step == 1:
     <div class="custom-upload-wrapper">
     """, unsafe_allow_html=True)
     
-    uploaded_file = st.file_uploader("Upload Image", type=["jpg", "jpeg", "png"], label_visibility="hidden")
+    uploaded_file = st.file_uploader("Upload Layout Image", type=["jpg", "jpeg", "png"], label_visibility="hidden")
     
     st.markdown("</div>", unsafe_allow_html=True)
     
@@ -1922,19 +1699,16 @@ if current_step == 1:
         image_bytes = uploaded_file.getvalue()
         pil_image = Image.open(BytesIO(image_bytes)).convert("RGB")
         
-        # Detect background type when image is uploaded
-        if 'uploaded_image_background_type' not in st.session_state or st.session_state.get('last_uploaded_file_name') != uploaded_file.name:
-            with st.spinner("🔍 Detecting background type..."):
-                background_type = detect_background_type(image_bytes)
-                st.session_state.uploaded_image_background_type = background_type
-                st.session_state.uploaded_image_bytes = image_bytes  # Store for use in Step 5
-                # Store original uploaded image as base64 (before detection/regeneration)
-                # This will be used for background toggle in Step 2
-                nparr = np.frombuffer(image_bytes, np.uint8)
-                original_cv_image = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
-                if original_cv_image is not None:
-                    st.session_state.original_uploaded_image_base64 = ndarray_to_data_url(original_cv_image)
-                st.session_state.last_uploaded_file_name = uploaded_file.name
+        # Store image data when uploaded
+        if st.session_state.get('last_uploaded_file_name') != uploaded_file.name:
+            st.session_state.uploaded_image_bytes = image_bytes  # Store for use in Step 5
+            # Store original uploaded image as base64 (before detection/regeneration)
+            # This will be used for background toggle in Step 2
+            nparr = np.frombuffer(image_bytes, np.uint8)
+            original_cv_image = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
+            if original_cv_image is not None:
+                st.session_state.original_uploaded_image_base64 = ndarray_to_data_url(original_cv_image)
+            st.session_state.last_uploaded_file_name = uploaded_file.name
         
         # Image Preview Expander - inline with file name
         with st.expander(" Image Preview", expanded=False):
@@ -1977,16 +1751,12 @@ if current_step == 1:
                     st.session_state.current_step = 2  # Go to Step 2 (Regenerated Image)
                     st.rerun()
 
-# STEP 2: Regenerated Image (shows detection image with red lines and dots)
+# STEP 2: Regenerated Image 
 elif current_step == 2:
     if st.session_state.detection_image is not None and st.session_state.plots:
         # Initialize show_background_step2 if not already set
         if 'show_background_step2' not in st.session_state:
             st.session_state.show_background_step2 = True
-        
-        # Add heading for Step 2
-        # st.write("**Use the interactive canvas below to edit plot coordinates. Zoom, pan, and move dots as needed.**")
-        
         # Store original image as base64 for the editable viewer
         if st.session_state.original_image_base64 is None:
             # Convert detection image to base64
@@ -2029,48 +1799,40 @@ elif current_step == 2:
         # Get image dimensions for blank image creation
         height, width = st.session_state.detection_image.shape[:2]
         
-        # Prepare background image URL based on toggle state
         # Use original uploaded image if available, otherwise fall back to original_image_base64
         original_bg_image = st.session_state.get('original_uploaded_image_base64') or st.session_state.original_image_base64
+        background_url = original_bg_image
         
-        if st.session_state.get('show_background_step2', True):
-            background_url = original_bg_image
-        else:
-            # Create a blank white image with plot lines and points visible
-            blank_image = np.ones((height, width, 3), dtype=np.uint8) * 255
-            
-            # Draw all plot boundaries and points on the blank image
-            for plot in st.session_state.plots:
-                corners = plot.get('corners', {})
-                if not corners or len(corners) < 4:
-                    continue
-                
-                # Draw polygon lines
-                pts = np.array([
-                    [corners['A']['x'], corners['A']['y']],
-                    [corners['B']['x'], corners['B']['y']],
-                    [corners['C']['x'], corners['C']['y']],
-                    [corners['D']['x'], corners['D']['y']]
-                ], np.int32)
-                
-                # Draw red lines
-                cv2.polylines(blank_image, [pts], True, (0, 0, 255), 2)
-                
-                # Draw red dots at corners
-                cv2.circle(blank_image, (corners['A']['x'], corners['A']['y']), 5, (0, 0, 255), -1)
-                cv2.circle(blank_image, (corners['B']['x'], corners['B']['y']), 5, (0, 0, 255), -1)
-                cv2.circle(blank_image, (corners['C']['x'], corners['C']['y']), 5, (0, 0, 255), -1)
-                cv2.circle(blank_image, (corners['D']['x'], corners['D']['y']), 5, (0, 0, 255), -1)
-                
-                # Draw plot number in the center
-                plot_number = plot.get('plot_number')
-                if plot_number is not None:
-                    cx = sum([corners[c]['x'] for c in corners]) // 4
-                    cy = sum([corners[c]['y'] for c in corners]) // 4
-                    cv2.putText(blank_image, str(plot_number),
-                               (cx-10, cy+5), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 0), 2)
-            
-            background_url = ndarray_to_data_url(blank_image)
+        # Helper function to add background toggle JavaScript
+        def add_background_toggle_script():
+            show_bg = st.session_state.get('show_background_step2', True)
+            st.components.v1.html(f"""
+            <script>
+                (function() {{
+                    // Wait for iframe to load, then send toggle message
+                    setTimeout(function() {{
+                        try {{
+                            // Find all iframes that might contain the canvas
+                            const iframes = parent.document.querySelectorAll('iframe');
+                            
+                            for (let iframe of iframes) {{
+                                try {{
+                                    // Send message to iframe to toggle background
+                                    iframe.contentWindow.postMessage({{
+                                        type: 'toggle_background',
+                                        show: {str(show_bg).lower()}
+                                    }}, '*');
+                                }} catch(e) {{
+                                    // Iframe might not be ready or cross-origin
+                                }}
+                            }}
+                        }} catch(e) {{
+                            console.error('Error sending background toggle message:', e);
+                        }}
+                    }}, 300);
+                }})();
+            </script>
+            """, height=0)
         
         with tab1:
             if editable_plot_viewer and background_url:
@@ -2079,6 +1841,7 @@ elif current_step == 2:
                     plots=plots_for_viewer,
                     mode="lines"
                 )
+                add_background_toggle_script()
             else:
                 st.warning("⚠️ Editable viewer not available. Showing static image.")
                 if st.session_state.get('show_background_step2', True):
@@ -2126,6 +1889,7 @@ elif current_step == 2:
                     plots=plots_for_viewer,
                     mode="points"
                 )
+                add_background_toggle_script()
             else:
                 st.warning("⚠️ Editable viewer not available. Showing static image.")
                 if st.session_state.get('show_background_step2', True):
@@ -2570,6 +2334,7 @@ elif current_step == 2:
                             st.success(msg)
                             st.session_state.coordinates_detected = True
                             st.session_state.edits_made_in_step2 = True
+                            st.session_state.show_next_warning_step2 = False  # Reset warning
                             st.rerun()
                         else:
                             st.warning("No matching plots found to update. Make sure the plot IDs match.")
@@ -2581,16 +2346,47 @@ elif current_step == 2:
             else:
                 # No JSON pasted; just mark as ready using current data
                 st.session_state.coordinates_detected = True
+                st.session_state.show_next_warning_step2 = False  # Reset warning
         
         # Show success message if coordinates are detected
         if st.session_state.get('coordinates_detected', False):
             st.success("Coordinates ready! You can proceed to the next step.")
         
-        # Navigation buttons for Step 2
+        # Show warning if Next was clicked without coordinates detected
+        if st.session_state.get('show_next_warning_step2', False):
+            col_warn1, col_warn2, col_warn3 = st.columns([8, 1, 1])
+            with col_warn1:
+                st.write("")  # Spacer
+            with col_warn2:
+                st.write("")  # Spacer
+            with col_warn3:
+                st.markdown("""
+                <div style="
+                    background-color: #fff3cd;
+                    border: 1px solid #ffc107;
+                    border-radius: 8px;
+                    padding: 12px 16px;
+                    margin-bottom: 12px;
+                    text-align: center;
+                    font-size: 12px;
+                    color: #856404;
+                    line-height: 1.5;
+                    box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+                    min-width: 200px;
+                ">
+                    <div style="font-weight: 600; margin-bottom: 4px;">⚠️ Please ensure</div>
+                    <div>coordinates are detected first!</div>
+                </div>
+                """, unsafe_allow_html=True)
+        
+        # Navigation buttons for Step 2 - in same row
         col_btn1, col_btn2, col_btn3 = st.columns([8, 1, 1])
+        with col_btn1:
+            st.write("")  # Spacer
         with col_btn2:
-            if st.button("Previous", type="primary", key="prev_step2"):
+            if st.button("Prev", type="primary", key="prev_step2"):
                 st.session_state.current_step = 1  # Go back to Step 1
+                st.session_state.show_next_warning_step2 = False  # Reset warning
                 st.rerun()
         with col_btn3:
             if st.button("Next", type="primary", key="next_step2"):
@@ -2599,12 +2395,14 @@ elif current_step == 2:
                     if st.session_state.get('edits_made_in_step2', False):
                         # Note: We can't directly read localStorage from Python
                         # The user should use Step 3's grid to make precise edits
-                        # Or we could add a JavaScript component to read and send the data
                         st.info("💡 Tip: Use Step 3's grid table to make precise coordinate adjustments if needed.")
                     st.session_state.current_step = 3  # Go to Step 3 (Detect Coordinates)
+                    st.session_state.show_next_warning_step2 = False  # Reset warning
                     st.rerun()
                 else:
-                    st.warning("⚠️ Please ensure coordinates are detected first!")
+                    # Show warning when Next is clicked without coordinates
+                    st.session_state.show_next_warning_step2 = True
+                    st.rerun()
     else:
         st.info("Please upload and detect plots first in Step 1.")
 
@@ -2612,7 +2410,6 @@ elif current_step == 2:
 elif current_step == 3:
     if st.session_state.plots:
         st.subheader("Edit Plot Numbers & Coordinates")
-        st.write("**Note:** Editable Data Grid with Runtime Save option")
         st.write("Use the table below to correct plot numbers and corner coordinates (A, B, C, D). All columns except Plot ID are editable.")
         
         # Build DataFrame for editable table
@@ -2650,7 +2447,8 @@ elif current_step == 3:
                 "D_y": st.column_config.NumberColumn("D → y", min_value=0, step=1, help="Corner D, y coordinate"),
             },
             use_container_width=True,
-            num_rows="fixed"
+            num_rows="fixed",
+            height=300
         )
         
         # Use edited_df directly for processing (columns are already A_x, A_y, etc.)
@@ -2677,9 +2475,9 @@ elif current_step == 3:
         else:
             st.success("✓ No duplicate plot numbers found")
         
-        col_save, col_revert, col_spacer = st.columns([1, 1, 6])
+        col_save, col_revert, col_spacer = st.columns([1.5, 1.5, 5])
         with col_save:
-            if st.button("Save Changes", type="primary", use_container_width=True):
+            if st.button("Save Changes", type="primary"):
                 # Apply edited numbers and coordinates back to session_state.plots
                 plot_updates = {}
                 for _, row in edited_df_processed.iterrows():
@@ -2764,14 +2562,14 @@ elif current_step == 3:
                 st.success("Applied changes. The image will be updated in Step 4.")
                 st.rerun()
         with col_revert:
-            if st.button("Revert Changes", type="primary", use_container_width=True):
+            if st.button("Revert Changes", type="primary"):
                 st.info("Reverted UI edits. The table reflects current values from detection.")
                 st.rerun()
         
         # Navigation buttons for Step 3
         col_btn1, col_btn2, col_btn3 = st.columns([8, 1, 1])
         with col_btn2:
-            if st.button("Previous", type="primary", key="prev_step3"):
+            if st.button("Prev", type="primary", key="prev_step3"):
                 st.session_state.current_step = 2  # Go back to Step 2
                 st.rerun()
         with col_btn3:
@@ -2780,202 +2578,6 @@ elif current_step == 3:
                 st.rerun()
     else:
         st.info("Please upload an image and detect plots first.")
-
-# STEP 4.5: Edit Coordinates (editable grid page)
-elif current_step == 4.5:
-    st.header("4.5 - Edit Coordinates")
-
-    if st.session_state.plots:
-        st.subheader("✏️ Edit Plot Numbers & Coordinates")
-        st.write("**Note:** Editable Data Grid with Runtime Save option")
-        st.write("Use the table below to correct plot numbers and corner coordinates (A, B, C, D). All columns except Plot ID are editable.")
-        
-        # Build DataFrame for editable table
-        sorted_plots = sorted(st.session_state.plots, key=lambda x: (x.get('plot_number') is None, x.get('plot_number') if x.get('plot_number') is not None else 0, x.get('plot_id')))
-        
-        plots_df_flat = pd.DataFrame([
-            {
-                "plot_id": p.get('plot_id'),
-                "plot_number": p.get('plot_number'),
-                "A_x": p.get('corners', {}).get('A', {}).get('x'),
-                "A_y": p.get('corners', {}).get('A', {}).get('y'),
-                "B_x": p.get('corners', {}).get('B', {}).get('x'),
-                "B_y": p.get('corners', {}).get('B', {}).get('y'),
-                "C_x": p.get('corners', {}).get('C', {}).get('x'),
-                "C_y": p.get('corners', {}).get('C', {}).get('y'),
-                "D_x": p.get('corners', {}).get('D', {}).get('x'),
-                "D_y": p.get('corners', {}).get('D', {}).get('y'),
-            }
-            for p in sorted_plots
-        ])
-        
-        edited_df = st.data_editor(
-            plots_df_flat,
-            hide_index=True,
-            column_config={
-                "plot_id": st.column_config.TextColumn("Plot ID", disabled=True),
-                "plot_number": st.column_config.NumberColumn("Plot Number", min_value=1, max_value=9999, step=1),
-                "A_x": st.column_config.NumberColumn("A → x", min_value=0, step=1, help="Corner A, x coordinate"),
-                "A_y": st.column_config.NumberColumn("A → y", min_value=0, step=1, help="Corner A, y coordinate"),
-                "B_x": st.column_config.NumberColumn("B → x", min_value=0, step=1, help="Corner B, x coordinate"),
-                "B_y": st.column_config.NumberColumn("B → y", min_value=0, step=1, help="Corner B, y coordinate"),
-                "C_x": st.column_config.NumberColumn("C → x", min_value=0, step=1, help="Corner C, x coordinate"),
-                "C_y": st.column_config.NumberColumn("C → y", min_value=0, step=1, help="Corner C, y coordinate"),
-                "D_x": st.column_config.NumberColumn("D → x", min_value=0, step=1, help="Corner D, x coordinate"),
-                "D_y": st.column_config.NumberColumn("D → y", min_value=0, step=1, help="Corner D, y coordinate"),
-            },
-            use_container_width=True,
-            num_rows="fixed"
-        )
-        
-        # Use edited_df directly for processing (columns are already A_x, A_y, etc.)
-        edited_df_processed = edited_df
-        
-        # Check for duplicate plot numbers in edited data
-        duplicate_mask = edited_df_processed['plot_number'].duplicated(keep=False) & edited_df_processed['plot_number'].notna()
-        duplicate_numbers = edited_df_processed[duplicate_mask]
-        if not duplicate_numbers.empty:
-            duplicate_nums = sorted(duplicate_numbers['plot_number'].unique())
-            duplicate_plot_ids = duplicate_numbers['plot_id'].tolist()
-            st.error(f"⚠️ **Duplicate plot numbers detected:** {', '.join(map(str, duplicate_nums))} in plots: {', '.join(duplicate_plot_ids)}")
-            
-            # Show a styled view with red highlighting for duplicates
-            def highlight_duplicates(row):
-                """Highlight rows with duplicate plot numbers in red."""
-                if pd.notna(row['plot_number']) and row['plot_number'] in duplicate_nums:
-                    return ['background-color: #ffcccc'] * len(row)  # Light red background
-                return [''] * len(row)
-            
-            with st.expander("View duplicates highlighted in red", expanded=True):
-                st.markdown("*Rows with duplicate plot numbers are highlighted in red:*")
-                st.dataframe(edited_df_processed.style.apply(highlight_duplicates, axis=1), use_container_width=True)
-        else:
-            st.success("✓ No duplicate plot numbers found")
-        
-        col_apply, col_reset = st.columns([1, 1])
-        with col_apply:
-            if st.button("Save Changes", type="primary"):
-                # Apply edited numbers and coordinates back to session_state.plots
-                plot_updates = {}
-                for _, row in edited_df_processed.iterrows():
-                    plot_id = row['plot_id']
-                    # Find original plot to preserve coordinates if needed
-                    original_plot = next((p for p in st.session_state.plots if p.get('plot_id') == plot_id), None)
-                    original_corners = original_plot.get('corners', {}) if original_plot else {}
-                    
-                    # Update plot number
-                    plot_number = int(row['plot_number']) if pd.notna(row['plot_number']) else None
-                    
-                    # Update corners, preserving original if new value is invalid/NaN
-                    def get_coord(row, coord_key, original_value):
-                        """Get coordinate value, using original if new value is invalid."""
-                        if coord_key in row and pd.notna(row[coord_key]):
-                            try:
-                                return int(row[coord_key])
-                            except (ValueError, TypeError):
-                                return original_value
-                        return original_value
-                    
-                    corners = {}
-                    for corner in ['A', 'B', 'C', 'D']:
-                        orig_x = original_corners.get(corner, {}).get('x', 0)
-                        orig_y = original_corners.get(corner, {}).get('y', 0)
-                        corners[corner] = {
-                            'x': get_coord(row, f'{corner}_x', orig_x),
-                            'y': get_coord(row, f'{corner}_y', orig_y)
-                        }
-                    
-                    plot_updates[plot_id] = {
-                        'plot_number': plot_number,
-                        'corners': corners
-                    }
-                
-                # Apply updates
-                for p in st.session_state.plots:
-                    if p.get('plot_id') in plot_updates:
-                        update = plot_updates[p['plot_id']]
-                        p['plot_number'] = update['plot_number']
-                        p['corners'] = update['corners']
-                
-                # Regenerate detection image with updated coordinates
-                if st.session_state.detection_image is not None:
-                    original_img = st.session_state.detection_image.copy()
-                    # Create a white background with the same dimensions
-                    if len(original_img.shape) == 3:
-                        height, width = original_img.shape[:2]
-                        display_img = np.ones((height, width, 3), dtype=np.uint8) * 255
-                    else:
-                        height, width = original_img.shape
-                        display_img = np.ones((height, width, 3), dtype=np.uint8) * 255
-                    
-                    # Redraw all plots with updated coordinates
-                    # Only draw plots that have valid corners
-                    for plot in st.session_state.plots:
-                        corners = plot.get('corners', {})
-                        if not corners:
-                            continue
-                        
-                        # Validate that all corners exist and have valid coordinates
-                        required_corners = ['A', 'B', 'C', 'D']
-                        if not all(corner in corners for corner in required_corners):
-                            continue
-                        
-                        # Validate coordinates are numbers
-                        try:
-                            pts = np.array([
-                                [int(corners['A']['x']), int(corners['A']['y'])],
-                                [int(corners['B']['x']), int(corners['B']['y'])],
-                                [int(corners['C']['x']), int(corners['C']['y'])],
-                                [int(corners['D']['x']), int(corners['D']['y'])]
-                            ], np.int32)
-                        except (KeyError, ValueError, TypeError):
-                            # Skip plots with invalid coordinates
-                            continue
-                        # Red lines for plot boundaries
-                        cv2.polylines(display_img, [pts], True, (0, 0, 255), 2)
-                        
-                        # Draw red dots at each corner
-                        cv2.circle(display_img, (corners['A']['x'], corners['A']['y']), 4, (0, 0, 255), -1)
-                        cv2.circle(display_img, (corners['B']['x'], corners['B']['y']), 4, (0, 0, 255), -1)
-                        cv2.circle(display_img, (corners['C']['x'], corners['C']['y']), 4, (0, 0, 255), -1)
-                        cv2.circle(display_img, (corners['D']['x'], corners['D']['y']), 4, (0, 0, 255), -1)
-                        
-                        # Draw plot number - use current plot number from session state
-                        plot_number = plot.get('plot_number')
-                        if plot_number is not None:
-                            cx = sum([corners[c]['x'] for c in corners]) // 4
-                            cy = sum([corners[c]['y'] for c in corners]) // 4
-                            cv2.putText(display_img, str(plot_number),
-                                       (cx-10, cy+5), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 0), 2)
-                    
-                    st.session_state.detection_image = display_img
-                    st.session_state.detected_overlay_url = ndarray_to_data_url(display_img)
-                    # Don't overwrite original_image_base64 - preserve for background toggle
-                    if st.session_state.original_image_base64 is None:
-                        st.session_state.original_image_base64 = ndarray_to_data_url(display_img)
-                    st.session_state.brochure_overlay_url = st.session_state.detected_overlay_url
-                
-                # Reset geo_plots so user regenerates with consistent numbers
-                st.session_state.geo_plots = []
-                st.success(" Applied changes. The image has been regenerated and will be visible in Step 4.")
-                st.rerun()
-        with col_reset:
-            if st.button("Revert Changes", type="primary"):
-                st.info("Reverted UI edits. The table reflects current values from detection.")
-                st.rerun()
-        
-        # Navigation buttons for Step 4.5
-        col_btn1, col_btn2, col_btn3 = st.columns([8, 1, 1])
-        with col_btn2:
-            if st.button("Previous", type="primary", key="prev_step4_5"):
-                st.session_state.current_step = 4  # Go back to Step 4
-                st.rerun()
-        with col_btn3:
-            if st.button("Next", type="primary", key="next_step4_5"):
-                st.session_state.current_step = 5  # Go to Step 5 (Preview in Brochure)
-                st.rerun()
-    else:
-        st.info("Please detect plots first.")
 
 # STEP 5: Preview in Brochure
 elif current_step == 5:
@@ -3222,10 +2824,10 @@ elif current_step == 5:
                         width: 40px; height: 40px; border-radius: 50%; border: none;
                         background: #6366f1; color: white; font-size: 18px; cursor: pointer;
                     ">-</button>
-                    <input type="number" id="brochure-scale-input" value="1.0" step="0.1" min="0.1" max="5.0" placeholder="Scale" style="
+                    <input type="number" id="brochure-scale-input" value="0.1" step="0.01" min="0.01" max="1.0" placeholder="Scale Step" style="
                         width: 80px; height: 35px; border: 1px solid #ccc; border-radius: 4px;
                         padding: 5px; text-align: center; font-size: 13px; margin-left: 5px;
-                    ">
+                    " title="Enter scale increment value (e.g., 0.25). Click +/- to scale by this amount.">
                 </div>
                 <div style="display: flex; align-items: center; gap: 10px;">
                     <span style="font-weight: bold; color: #333; margin-right: 5px;">Move</span>
@@ -3252,14 +2854,14 @@ elif current_step == 5:
                         ">▼</button>
                         <div></div>
                     </div>
-                    <input type="number" id="brochure-move-x-input" value="0" step="1" placeholder="X px" style="
+                    <input type="number" id="brochure-move-x-input" value="10" step="1" placeholder="X Step" style="
                         width: 70px; height: 35px; border: 1px solid #ccc; border-radius: 4px;
                         padding: 5px; text-align: center; font-size: 13px; margin-left: 5px;
-                    ">
-                    <input type="number" id="brochure-move-y-input" value="0" step="1" placeholder="Y px" style="
+                    " title="Enter move increment for X (pixels). Click arrow buttons to move by this amount.">
+                    <input type="number" id="brochure-move-y-input" value="10" step="1" placeholder="Y Step" style="
                         width: 70px; height: 35px; border: 1px solid #ccc; border-radius: 4px;
                         padding: 5px; text-align: center; font-size: 13px;
-                    ">
+                    " title="Enter move increment for Y (pixels). Click arrow buttons to move by this amount.">
                 </div>
                 <div style="display: flex; align-items: center; gap: 10px;">
                     <span style="font-weight: bold; color: #333; margin-right: 5px;">Rotate</span>
@@ -3324,12 +2926,15 @@ elif current_step == 5:
                                         const allObjects = brochureCanvas.getObjects();
                                         plotPolygons = allObjects.filter(obj => obj.plotId);
                                         
-                                        // Store original points
+                                        // Store original points ONCE - never update them
                                         plotPolygons.forEach(polygon => {
                                             if (!polygon.originalPoints) {
-                                                polygon.originalPoints = polygon.points.map(p => ({x: p.x, y: p.y}));
+                                                // Deep copy to ensure we store the true original
+                                                polygon.originalPoints = JSON.parse(JSON.stringify(polygon.points.map(p => ({x: p.x, y: p.y}))));
                                                 polygon.originalLeft = polygon.left;
                                                 polygon.originalTop = polygon.top;
+                                                // Mark as set to prevent overwriting
+                                                polygon.originalPointsSet = true;
                                             }
                                         });
                                         
@@ -3390,19 +2995,25 @@ elif current_step == 5:
                             const currentPolygons = allObjects.filter(obj => obj.plotId);
                             
                             currentPolygons.forEach(polygon => {
-                                if (!polygon.originalPoints) {
-                                    polygon.originalPoints = polygon.points.map(p => ({x: p.x, y: p.y}));
+                                // Ensure originalPoints exists - set once from true original
+                                if (!polygon.originalPoints || !polygon.originalPointsSet) {
+                                    // Deep copy to ensure we store the true original
+                                    polygon.originalPoints = JSON.parse(JSON.stringify(polygon.points.map(p => ({x: p.x, y: p.y}))));
                                     polygon.originalLeft = polygon.left;
                                     polygon.originalTop = polygon.top;
+                                    polygon.originalPointsSet = true;
                                 }
                                 
+                                // Always use the stored originalPoints for transformations
                                 const origCenterX = polygon.originalPoints.reduce((sum, p) => sum + p.x, 0) / polygon.originalPoints.length;
                                 const origCenterY = polygon.originalPoints.reduce((sum, p) => sum + p.y, 0) / polygon.originalPoints.length;
                                 
+                                // Transform from ORIGINAL points using absolute scale and offset values
                                 const transformedPoints = polygon.originalPoints.map(p => {
                                     let x = p.x - origCenterX;
                                     let y = p.y - origCenterY;
                                     
+                                    // Apply absolute scale (not cumulative)
                                     x *= scale;
                                     y *= scale;
                                     
@@ -3412,6 +3023,7 @@ elif current_step == 5:
                                     const newX = x * cos - y * sin;
                                     const newY = x * sin + y * cos;
                                     
+                                    // Apply absolute offset (not cumulative)
                                     return {
                                         x: newX + origCenterX + offsetX,
                                         y: newY + origCenterY + offsetY
@@ -3469,15 +3081,26 @@ elif current_step == 5:
                         
                         const iframeWindow = brochureIframe.contentWindow;
                         
-                        // Scale input handler
+                        // Scale input stores the increment/decrement value (not the current scale)
+                        // Initialize scale display separately
+                        if (!iframeWindow.scaleDisplay) {
+                            iframeWindow.scaleDisplay = document.createElement('span');
+                            iframeWindow.scaleDisplay.id = 'brochure-scale-display';
+                            iframeWindow.scaleDisplay.style.cssText = 'margin-left: 5px; font-size: 12px; color: #666; min-width: 50px; display: inline-block;';
+                            const currentScale = iframeWindow.currentScale || 1.0;
+                            iframeWindow.scaleDisplay.textContent = 'Current: ' + currentScale.toFixed(2) + 'x';
+                            if (scaleInput && scaleInput.parentNode) {
+                                scaleInput.parentNode.appendChild(iframeWindow.scaleDisplay);
+                            }
+                        }
+                        
+                        // Scale input handler - stores the step value for +/- buttons
                         if (scaleInput) {
                             scaleInput.onchange = function() {
-                                const scaleValue = parseFloat(this.value) || 1.0;
-                                if (scaleValue >= 0.1 && scaleValue <= 5.0) {
-                                    iframeWindow.currentScale = scaleValue;
-                                    applyTransform();
-                                } else {
-                                    this.value = iframeWindow.currentScale || 1.0;
+                                // Just validate the step value, don't apply transform
+                                const stepValue = parseFloat(this.value) || 0.1;
+                                if (stepValue < 0.01 || stepValue > 1.0) {
+                                    this.value = 0.1;
                                 }
                             };
                         }
@@ -3488,9 +3111,14 @@ elif current_step == 5:
                                 e.stopPropagation();
                                 try {
                                     const currentScale = iframeWindow.currentScale || 1.0;
-                                    const newScale = currentScale * 1.1;
+                                    const stepValue = parseFloat(scaleInput?.value || 0.1) || 0.1;
+                                    // Add step value to current scale
+                                    const newScale = currentScale + stepValue;
                                     iframeWindow.currentScale = newScale;
-                                    if (scaleInput) scaleInput.value = newScale.toFixed(2);
+                                    // Update display
+                                    if (iframeWindow.scaleDisplay) {
+                                        iframeWindow.scaleDisplay.textContent = 'Current: ' + newScale.toFixed(2) + 'x';
+                                    }
                                     applyTransform();
                                 } catch(err) {
                                     console.error('Error in scale up:', err);
@@ -3505,9 +3133,14 @@ elif current_step == 5:
                                 e.stopPropagation();
                                 try {
                                     const currentScale = iframeWindow.currentScale || 1.0;
-                                    const newScale = currentScale / 1.1;
+                                    const stepValue = parseFloat(scaleInput?.value || 0.1) || 0.1;
+                                    // Subtract step value from current scale
+                                    const newScale = Math.max(0.1, currentScale - stepValue);
                                     iframeWindow.currentScale = newScale;
-                                    if (scaleInput) scaleInput.value = newScale.toFixed(2);
+                                    // Update display
+                                    if (iframeWindow.scaleDisplay) {
+                                        iframeWindow.scaleDisplay.textContent = 'Current: ' + newScale.toFixed(2) + 'x';
+                                    }
                                     applyTransform();
                                 } catch(err) {
                                     console.error('Error in scale down:', err);
@@ -3516,20 +3149,37 @@ elif current_step == 5:
                             };
                         }
                         
-                        // Move input handlers
+                        // Move input handlers - stores the step value for arrow buttons
+                        // Initialize move display separately
+                        if (!iframeWindow.moveDisplay) {
+                            iframeWindow.moveDisplay = document.createElement('div');
+                            iframeWindow.moveDisplay.id = 'brochure-move-display';
+                            iframeWindow.moveDisplay.style.cssText = 'margin-left: 5px; font-size: 11px; color: #666;';
+                            const currentX = iframeWindow.currentOffsetX || 0;
+                            const currentY = iframeWindow.currentOffsetY || 0;
+                            iframeWindow.moveDisplay.innerHTML = 'Current: X=' + currentX + ', Y=' + currentY;
+                            if (moveYInput && moveYInput.parentNode) {
+                                moveYInput.parentNode.appendChild(iframeWindow.moveDisplay);
+                            }
+                        }
+                        
                         if (moveXInput) {
                             moveXInput.onchange = function() {
-                                const moveValue = parseFloat(this.value) || 0;
-                                iframeWindow.currentOffsetX = moveValue;
-                                applyTransform();
+                                // Just validate the step value, don't apply transform
+                                const stepValue = parseFloat(this.value) || 10;
+                                if (stepValue < 1) {
+                                    this.value = 10;
+                                }
                             };
                         }
                         
                         if (moveYInput) {
                             moveYInput.onchange = function() {
-                                const moveValue = parseFloat(this.value) || 0;
-                                iframeWindow.currentOffsetY = moveValue;
-                                applyTransform();
+                                // Just validate the step value, don't apply transform
+                                const stepValue = parseFloat(this.value) || 10;
+                                if (stepValue < 1) {
+                                    this.value = 10;
+                                }
                             };
                         }
                         
@@ -3538,9 +3188,12 @@ elif current_step == 5:
                                 e.preventDefault();
                                 e.stopPropagation();
                                 try {
-                                    const moveAmount = 10; // Fixed increment amount
-                                    iframeWindow.currentOffsetY = (iframeWindow.currentOffsetY || 0) - moveAmount;
-                                    if (moveYInput) moveYInput.value = iframeWindow.currentOffsetY;
+                                    const stepValue = parseFloat(moveYInput?.value || 10) || 10;
+                                    iframeWindow.currentOffsetY = (iframeWindow.currentOffsetY || 0) - stepValue;
+                                    // Update display
+                                    if (iframeWindow.moveDisplay) {
+                                        iframeWindow.moveDisplay.innerHTML = 'Current: X=' + (iframeWindow.currentOffsetX || 0) + ', Y=' + (iframeWindow.currentOffsetY || 0);
+                                    }
                                     applyTransform();
                                 } catch(err) {
                                     console.error('Error in move up:', err);
@@ -3554,9 +3207,12 @@ elif current_step == 5:
                                 e.preventDefault();
                                 e.stopPropagation();
                                 try {
-                                    const moveAmount = 10; // Fixed increment amount
-                                    iframeWindow.currentOffsetY = (iframeWindow.currentOffsetY || 0) + moveAmount;
-                                    if (moveYInput) moveYInput.value = iframeWindow.currentOffsetY;
+                                    const stepValue = parseFloat(moveYInput?.value || 10) || 10;
+                                    iframeWindow.currentOffsetY = (iframeWindow.currentOffsetY || 0) + stepValue;
+                                    // Update display
+                                    if (iframeWindow.moveDisplay) {
+                                        iframeWindow.moveDisplay.innerHTML = 'Current: X=' + (iframeWindow.currentOffsetX || 0) + ', Y=' + (iframeWindow.currentOffsetY || 0);
+                                    }
                                     applyTransform();
                                 } catch(err) {
                                     console.error('Error in move down:', err);
@@ -3570,9 +3226,12 @@ elif current_step == 5:
                                 e.preventDefault();
                                 e.stopPropagation();
                                 try {
-                                    const moveAmount = 10; // Fixed increment amount
-                                    iframeWindow.currentOffsetX = (iframeWindow.currentOffsetX || 0) - moveAmount;
-                                    if (moveXInput) moveXInput.value = iframeWindow.currentOffsetX;
+                                    const stepValue = parseFloat(moveXInput?.value || 10) || 10;
+                                    iframeWindow.currentOffsetX = (iframeWindow.currentOffsetX || 0) - stepValue;
+                                    // Update display
+                                    if (iframeWindow.moveDisplay) {
+                                        iframeWindow.moveDisplay.innerHTML = 'Current: X=' + (iframeWindow.currentOffsetX || 0) + ', Y=' + (iframeWindow.currentOffsetY || 0);
+                                    }
                                     applyTransform();
                                 } catch(err) {
                                     console.error('Error in move left:', err);
@@ -3586,9 +3245,12 @@ elif current_step == 5:
                                 e.preventDefault();
                                 e.stopPropagation();
                                 try {
-                                    const moveAmount = 10; // Fixed increment amount
-                                    iframeWindow.currentOffsetX = (iframeWindow.currentOffsetX || 0) + moveAmount;
-                                    if (moveXInput) moveXInput.value = iframeWindow.currentOffsetX;
+                                    const stepValue = parseFloat(moveXInput?.value || 10) || 10;
+                                    iframeWindow.currentOffsetX = (iframeWindow.currentOffsetX || 0) + stepValue;
+                                    // Update display
+                                    if (iframeWindow.moveDisplay) {
+                                        iframeWindow.moveDisplay.innerHTML = 'Current: X=' + (iframeWindow.currentOffsetX || 0) + ', Y=' + (iframeWindow.currentOffsetY || 0);
+                                    }
                                     applyTransform();
                                 } catch(err) {
                                     console.error('Error in move right:', err);
@@ -3659,7 +3321,7 @@ elif current_step == 5:
         with col_btn1:
             st.write("")  # Spacer for alignment
         with col_btn2:
-            if st.button("Previous", type="primary", key="prev_step5"):
+            if st.button("Prev", type="primary", key="prev_step5"):
                 st.session_state.current_step = 4  # Go back to Step 4
                 st.rerun()
         with col_btn3:
@@ -3709,7 +3371,7 @@ elif current_step == 6:
         if st.session_state.geo_plots:
             col_btn1, col_btn2, col_btn3 = st.columns([8, 1, 1])
             with col_btn2:
-                if st.button("Previous", type="primary", key="prev_step6"):
+                if st.button("Prev", type="primary", key="prev_step6"):
                     st.session_state.current_step = 5  # Go back to Step 5
                     st.rerun()
             with col_btn3:
@@ -3725,16 +3387,17 @@ elif current_step == 4:
 
     if st.session_state.plots:
         st.markdown(
-            '<div style="margin: 6px 0 12px 0; font-weight:600; color:#1f2937;">'
+            '<div style="margin: 10px 0 12px 0; font-weight:600; color:#1f2937; font-size: 14px; visibility: visible !important; display: block !important;">'
             'This preview shows the updated image based on any edits made in previous steps.'
             '</div>',
             unsafe_allow_html=True
         )
-      
         
         # Button to manually regenerate image from current plot coordinates
         if st.button("Regenerate Image", type="primary", use_container_width=False):
             st.rerun()
+        
+        st.markdown('<div style="margin-top: 5px;"></div>', unsafe_allow_html=True)
         
         # Always regenerate the image to ensure it's up to date with current plot data
         if st.session_state.detection_image is not None:
@@ -3744,15 +3407,16 @@ elif current_step == 4:
             
             # Get dimensions from the original image
             if len(original_img.shape) == 3:
-                height, width = original_img.shape[:2]
+                orig_height, orig_width = original_img.shape[:2]
             else:
-                height, width = original_img.shape
+                orig_height, orig_width = original_img.shape
             
-            # Create a white background with the same dimensions
-            display_img = np.ones((height, width, 3), dtype=np.uint8) * 255
+            # CRITICAL: Calculate bounding box of all plots to ensure all are visible
+            # This includes plots created below or outside the original image bounds
+            min_x, min_y, max_x, max_y = None, None, None, None
             
-            # Redraw all plots with current coordinates and updated plot numbers
-            # Only draw plots that have valid corners
+            # First pass: calculate bounding box from all valid plots
+            valid_plots = []
             for plot in st.session_state.plots:
                 corners = plot.get('corners', {})
                 if not corners:
@@ -3765,29 +3429,93 @@ elif current_step == 4:
                 
                 # Validate coordinates are numbers
                 try:
-                    pts = np.array([
-                        [int(corners['A']['x']), int(corners['A']['y'])],
-                        [int(corners['B']['x']), int(corners['B']['y'])],
-                        [int(corners['C']['x']), int(corners['C']['y'])],
-                        [int(corners['D']['x']), int(corners['D']['y'])]
-                    ], np.int32)
+                    # Get all corner coordinates
+                    x_coords = [int(corners[c]['x']) for c in required_corners]
+                    y_coords = [int(corners[c]['y']) for c in required_corners]
+                    
+                    # Update bounding box
+                    plot_min_x, plot_max_x = min(x_coords), max(x_coords)
+                    plot_min_y, plot_max_y = min(y_coords), max(y_coords)
+                    
+                    if min_x is None:
+                        min_x, min_y = plot_min_x, plot_min_y
+                        max_x, max_y = plot_max_x, plot_max_y
+                    else:
+                        min_x = min(min_x, plot_min_x)
+                        min_y = min(min_y, plot_min_y)
+                        max_x = max(max_x, plot_max_x)
+                        max_y = max(max_y, plot_max_y)
+                    
+                    valid_plots.append(plot)
                 except (KeyError, ValueError, TypeError):
                     # Skip plots with invalid coordinates
                     continue
+            
+            # Calculate canvas size with padding to fit all plots
+            padding = 50  # Padding around all plots
+            if min_x is not None and max_x is not None:
+                # Use bounding box of plots, but ensure it's at least as large as original image
+                canvas_width = max(max_x - min_x + 2 * padding, orig_width)
+                canvas_height = max(max_y - min_y + 2 * padding, orig_height)
+                
+                # Calculate offset to center content (if plots extend beyond original image)
+                offset_x = min(0, min_x - padding)  # Negative if plots extend left
+                offset_y = min(0, min_y - padding)  # Negative if plots extend up
+                
+                # Adjust canvas size if plots extend beyond original bounds
+                if offset_x < 0:
+                    canvas_width += abs(offset_x)
+                if offset_y < 0:
+                    canvas_height += abs(offset_y)
+                
+                # Ensure canvas is at least as large as original image
+                canvas_width = max(canvas_width, orig_width)
+                canvas_height = max(canvas_height, orig_height)
+            else:
+                # No valid plots, use original dimensions
+                canvas_width = orig_width
+                canvas_height = orig_height
+                offset_x = 0
+                offset_y = 0
+            
+            # Create white background with calculated dimensions
+            display_img = np.ones((canvas_height, canvas_width, 3), dtype=np.uint8) * 255
+            
+            # Draw original image if it fits within canvas (optional - can be commented out)
+            # If original image should be shown, uncomment this:
+            # if offset_x >= 0 and offset_y >= 0:
+            #     display_img[offset_y:offset_y+orig_height, offset_x:offset_x+orig_width] = original_img
+            
+            # Redraw all plots with current coordinates and updated plot numbers
+            for plot in valid_plots:
+                corners = plot.get('corners', {})
+                required_corners = ['A', 'B', 'C', 'D']
+                
+                # Adjust coordinates by offset to fit in canvas
+                try:
+                    pts = np.array([
+                        [int(corners['A']['x']) - offset_x, int(corners['A']['y']) - offset_y],
+                        [int(corners['B']['x']) - offset_x, int(corners['B']['y']) - offset_y],
+                        [int(corners['C']['x']) - offset_x, int(corners['C']['y']) - offset_y],
+                        [int(corners['D']['x']) - offset_x, int(corners['D']['y']) - offset_y]
+                    ], np.int32)
+                except (KeyError, ValueError, TypeError):
+                    continue
+                
                 # Red lines for plot boundaries (BGR format: red = (0, 0, 255))
                 cv2.polylines(display_img, [pts], True, (0, 0, 255), 2)
                 
                 # Draw red dots at each corner
-                cv2.circle(display_img, (corners['A']['x'], corners['A']['y']), 4, (0, 0, 255), -1)
-                cv2.circle(display_img, (corners['B']['x'], corners['B']['y']), 4, (0, 0, 255), -1)
-                cv2.circle(display_img, (corners['C']['x'], corners['C']['y']), 4, (0, 0, 255), -1)
-                cv2.circle(display_img, (corners['D']['x'], corners['D']['y']), 4, (0, 0, 255), -1)
+                cv2.circle(display_img, (int(corners['A']['x']) - offset_x, int(corners['A']['y']) - offset_y), 4, (0, 0, 255), -1)
+                cv2.circle(display_img, (int(corners['B']['x']) - offset_x, int(corners['B']['y']) - offset_y), 4, (0, 0, 255), -1)
+                cv2.circle(display_img, (int(corners['C']['x']) - offset_x, int(corners['C']['y']) - offset_y), 4, (0, 0, 255), -1)
+                cv2.circle(display_img, (int(corners['D']['x']) - offset_x, int(corners['D']['y']) - offset_y), 4, (0, 0, 255), -1)
                 
                 # Draw plot number in black - use current plot number from session state
                 plot_number = plot.get('plot_number')
                 if plot_number is not None:
-                    cx = sum([corners[c]['x'] for c in corners]) // 4
-                    cy = sum([corners[c]['y'] for c in corners]) // 4
+                    cx = sum([int(corners[c]['x']) - offset_x for c in corners]) // 4
+                    cy = sum([int(corners[c]['y']) - offset_y for c in corners]) // 4
                     cv2.putText(display_img, str(plot_number),
                                (cx-10, cy+5), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 0), 2)
             
@@ -3797,7 +3525,15 @@ elif current_step == 4:
             st.session_state.brochure_overlay_url = st.session_state.detected_overlay_url
             
             # Display the regenerated image - centered and sized for clear visibility
-            col1, col2, col3 = st.columns([1, 2.5, 1])
+            st.markdown("""
+                <style>
+                    div[data-testid="stImage"] img {
+                        max-height: 400px !important;
+                        object-fit: contain !important;
+                    }
+                </style>
+            """, unsafe_allow_html=True)
+            col1, col2, col3 = st.columns([0.3, 3.4, 0.3])
             with col2:
                 st.image(display_img, channels="BGR",
                         caption=f"{len(st.session_state.plots)} plots with updated coordinates (red lines and dots)",
@@ -3808,7 +3544,7 @@ elif current_step == 4:
         # Navigation buttons for Step 4
         col_btn1, col_btn2, col_btn3 = st.columns([8, 1, 1])
         with col_btn2:
-            if st.button("Previous", type="primary", key="prev_step4"):
+            if st.button("Prev", type="primary", key="prev_step4"):
                 st.session_state.current_step = 3  # Go back to Step 3
                 st.rerun()
         with col_btn3:
@@ -4093,7 +3829,7 @@ elif current_step == 7:
         if st.session_state.geo_plots:
             col_btn1, col_btn2, col_btn3 = st.columns([8, 1, 1])
             with col_btn2:
-                if st.button("Previous", type="primary", key="prev_step7"):
+                if st.button("Prev", type="primary", key="prev_step7"):
                     st.session_state.current_step = 6  # Go back to Step 6
                     st.rerun()
             with col_btn3:
@@ -4634,10 +4370,10 @@ elif current_step == 8:
                     width: 40px; height: 40px; border-radius: 50%; border: none;
                     background: #6366f1; color: white; font-size: 18px; cursor: pointer;
                 ">-</button>
-                <input type="number" id="map-scale-input" value="1.0" step="0.1" min="0.1" max="5.0" placeholder="Scale" style="
+                <input type="number" id="map-scale-input" value="0.1" step="0.01" min="0.01" max="1.0" placeholder="Scale Step" style="
                     width: 80px; height: 35px; border: 1px solid #ccc; border-radius: 4px;
                     padding: 5px; text-align: center; font-size: 13px; margin-left: 5px;
-                ">
+                " title="Enter scale increment value (e.g., 0.25). Click +/- to scale by this amount.">
             </div>
             <div style="display: flex; align-items: center; gap: 10px;">
                 <span style="font-weight: bold; color: #333; margin-right: 5px;">Move</span>
@@ -4664,14 +4400,14 @@ elif current_step == 8:
                     ">▼</button>
                     <div></div>
                 </div>
-                <input type="number" id="map-move-x-input" value="0" step="1" placeholder="X px" style="
+                <input type="number" id="map-move-x-input" value="10" step="1" placeholder="X Step" style="
                     width: 70px; height: 35px; border: 1px solid #ccc; border-radius: 4px;
                     padding: 5px; text-align: center; font-size: 13px; margin-left: 5px;
-                ">
-                <input type="number" id="map-move-y-input" value="0" step="1" placeholder="Y px" style="
+                " title="Enter move increment for X (pixels). Click arrow buttons to move by this amount.">
+                <input type="number" id="map-move-y-input" value="10" step="1" placeholder="Y Step" style="
                     width: 70px; height: 35px; border: 1px solid #ccc; border-radius: 4px;
                     padding: 5px; text-align: center; font-size: 13px;
-                ">
+                " title="Enter move increment for Y (pixels). Click arrow buttons to move by this amount.">
             </div>
             <div style="display: flex; align-items: center; gap: 10px;">
                 <span style="font-weight: bold; color: #333; margin-right: 5px;">Rotate</span>
@@ -4789,19 +4525,22 @@ elif current_step == 8:
                     setTimeout(findAndInitMap, 500);
                 }
                 
-                // Function to get all plot polygons from the map
+                    // Function to get all plot polygons from the map
                 function getPlotPolygons() {
                     if (!leafletMap || !Leaflet) return [];
                     
                     const polygons = [];
                     leafletMap.eachLayer(function(layer) {
                         if (layer instanceof Leaflet.Polygon) {
-                            // Store original coordinates if not already stored
-                            if (!layer.originalLatLngs) {
+                            // Store original coordinates ONCE - never update them
+                            if (!layer.originalLatLngs || !layer.originalLatLngsSet) {
                                 const latLngs = layer.getLatLngs()[0];
-                                layer.originalLatLngs = latLngs.map(function(ll) {
+                                // Deep copy to ensure we store the true original
+                                layer.originalLatLngs = JSON.parse(JSON.stringify(latLngs.map(function(ll) {
                                     return [ll.lat, ll.lng];
-                                });
+                                })));
+                                // Mark as set to prevent overwriting
+                                layer.originalLatLngsSet = true;
                             }
                             polygons.push(layer);
                         }
@@ -4809,12 +4548,22 @@ elif current_step == 8:
                     return polygons;
                 }
                 
-                // Function to reset transformations
+                // Function to reset transformations to original
                 function resetPlotTransform() {
                     plotScale = 1.0;
                     plotOffsetLat = 0;
                     plotOffsetLng = 0;
                     plotRotation = 0;
+                    
+                    // Update input fields to show reset values
+                    const scaleInput = document.getElementById('map-scale-input');
+                    const moveXInput = document.getElementById('map-move-x-input');
+                    const moveYInput = document.getElementById('map-move-y-input');
+                    const rotateInput = document.getElementById('map-rotate-input');
+                    if (scaleInput) scaleInput.value = '1.0';
+                    if (moveXInput) moveXInput.value = '0';
+                    if (moveYInput) moveYInput.value = '0';
+                    if (rotateInput) rotateInput.value = '0';
                     
                     // Reset all polygons to original coordinates
                     if (!leafletMap || !Leaflet) return;
@@ -4869,7 +4618,16 @@ elif current_step == 8:
                     if (!centroid) return;
                     
                     polygons.forEach(function(polygon) {
-                        const originalLatLngs = polygon.originalLatLngs || polygon.getLatLngs()[0];
+                        // Always use the stored originalLatLngs (true original, never updated)
+                        if (!polygon.originalLatLngs || !polygon.originalLatLngsSet) {
+                            const latLngs = polygon.getLatLngs()[0];
+                            polygon.originalLatLngs = JSON.parse(JSON.stringify(latLngs.map(function(ll) {
+                                return [ll.lat, ll.lng];
+                            })));
+                            polygon.originalLatLngsSet = true;
+                        }
+                        
+                        const originalLatLngs = polygon.originalLatLngs;
                         const transformedLatLngs = originalLatLngs.map(function(ll) {
                             let lat = Array.isArray(ll) ? ll[0] : ll.lat;
                             let lng = Array.isArray(ll) ? ll[1] : ll.lng;
@@ -4889,11 +4647,11 @@ elif current_step == 8:
                                 y = newY;
                             }
                             
-                            // Apply scale
+                            // Apply absolute scale (from original, not cumulative)
                             x *= plotScale;
                             y *= plotScale;
                             
-                            // Translate back and apply offset
+                            // Translate back and apply absolute offset (from original, not cumulative)
                             lng = centroid.lng + x + plotOffsetLng;
                             lat = centroid.lat + y + plotOffsetLat;
                             
@@ -4957,19 +4715,26 @@ elif current_step == 8:
                     const scaleDownBtn = document.getElementById('map-scale-down');
                     const scaleInput = document.getElementById('map-scale-input');
                     
-                    // Scale input handler
+                    // Scale input stores the increment/decrement value (not the current scale)
+                    // Initialize scale display separately
+                    let scaleDisplay = null;
+                    if (scaleInput && scaleInput.parentNode) {
+                        scaleDisplay = document.createElement('span');
+                        scaleDisplay.id = 'map-scale-display';
+                        scaleDisplay.style.cssText = 'margin-left: 5px; font-size: 12px; color: #666; min-width: 50px; display: inline-block;';
+                        scaleDisplay.textContent = 'Current: ' + plotScale.toFixed(2) + 'x';
+                        scaleInput.parentNode.appendChild(scaleDisplay);
+                    }
+                    
+                    // Scale input handler - stores the step value for +/- buttons
                     if (scaleInput) {
                         scaleInput.onchange = function() {
-                            const scaleValue = parseFloat(this.value) || 1.0;
-                            if (scaleValue >= 0.1 && scaleValue <= 5.0) {
-                                plotScale = scaleValue;
-                                applyPlotTransform();
-                            } else {
-                                this.value = plotScale.toFixed(2);
+                            // Just validate the step value, don't apply transform
+                            const stepValue = parseFloat(this.value) || 0.1;
+                            if (stepValue < 0.01 || stepValue > 1.0) {
+                                this.value = 0.1;
                             }
                         };
-                        // Update input when scale changes
-                        scaleInput.value = plotScale.toFixed(2);
                     }
                     
                     if (scaleUpBtn) {
@@ -4977,8 +4742,13 @@ elif current_step == 8:
                             e.preventDefault();
                             e.stopPropagation();
                             console.log('Plot scale up clicked!');
-                            plotScale *= 1.1;
-                            if (scaleInput) scaleInput.value = plotScale.toFixed(2);
+                            const stepValue = parseFloat(scaleInput?.value || 0.1) || 0.1;
+                            // Add step value to current scale
+                            plotScale = plotScale + stepValue;
+                            // Update display
+                            if (scaleDisplay) {
+                                scaleDisplay.textContent = 'Current: ' + plotScale.toFixed(2) + 'x';
+                            }
                             applyPlotTransform();
                             return false;
                         };
@@ -4990,8 +4760,13 @@ elif current_step == 8:
                             e.preventDefault();
                             e.stopPropagation();
                             console.log('Plot scale down clicked!');
-                            plotScale /= 1.1;
-                            if (scaleInput) scaleInput.value = plotScale.toFixed(2);
+                            const stepValue = parseFloat(scaleInput?.value || 0.1) || 0.1;
+                            // Subtract step value from current scale
+                            plotScale = Math.max(0.1, plotScale - stepValue);
+                            // Update display
+                            if (scaleDisplay) {
+                                scaleDisplay.textContent = 'Current: ' + plotScale.toFixed(2) + 'x';
+                            }
                             applyPlotTransform();
                             return false;
                         };
@@ -5006,28 +4781,38 @@ elif current_step == 8:
                     const moveXInput = document.getElementById('map-move-x-input');
                     const moveYInput = document.getElementById('map-move-y-input');
                     
-                    // Move input handlers (convert pixels to lat/lng approximately)
+                    // Move input handlers - stores the step value for arrow buttons
                     // Rough conversion: 1 pixel ≈ 0.0001 degrees at typical zoom levels
+                    // Initialize move display separately
+                    let moveDisplay = null;
+                    if (moveYInput && moveYInput.parentNode) {
+                        moveDisplay = document.createElement('div');
+                        moveDisplay.id = 'map-move-display';
+                        moveDisplay.style.cssText = 'margin-left: 5px; font-size: 11px; color: #666;';
+                        const currentXPx = Math.round(plotOffsetLng / 0.0001);
+                        const currentYPx = Math.round(-plotOffsetLat / 0.0001);
+                        moveDisplay.innerHTML = 'Current: X=' + currentXPx + 'px, Y=' + currentYPx + 'px';
+                        moveYInput.parentNode.appendChild(moveDisplay);
+                    }
+                    
                     if (moveXInput) {
                         moveXInput.onchange = function() {
-                            const pixelValue = parseFloat(this.value) || 0;
-                            // Convert pixels to degrees (approximate)
-                            plotOffsetLng = pixelValue * 0.0001;
-                            applyPlotTransform();
+                            // Just validate the step value, don't apply transform
+                            const stepValue = parseFloat(this.value) || 10;
+                            if (stepValue < 1) {
+                                this.value = 10;
+                            }
                         };
-                        // Initialize with current value
-                        moveXInput.value = Math.round(plotOffsetLng / 0.0001);
                     }
                     
                     if (moveYInput) {
                         moveYInput.onchange = function() {
-                            const pixelValue = parseFloat(this.value) || 0;
-                            // Convert pixels to degrees (approximate, negative for Y)
-                            plotOffsetLat = -pixelValue * 0.0001;
-                            applyPlotTransform();
+                            // Just validate the step value, don't apply transform
+                            const stepValue = parseFloat(this.value) || 10;
+                            if (stepValue < 1) {
+                                this.value = 10;
+                            }
                         };
-                        // Initialize with current value
-                        moveYInput.value = Math.round(-plotOffsetLat / 0.0001);
                     }
                     
                     if (moveUpBtn) {
@@ -5035,8 +4820,15 @@ elif current_step == 8:
                             e.preventDefault();
                             e.stopPropagation();
                             console.log('Plot move up clicked!');
-                            plotOffsetLat += 0.0001; // Move north (increase latitude)
-                            if (moveYInput) moveYInput.value = Math.round(-plotOffsetLat / 0.0001);
+                            const stepValue = parseFloat(moveYInput?.value || 10) || 10;
+                            // Convert pixels to degrees and subtract (move north)
+                            plotOffsetLat += stepValue * 0.0001;
+                            // Update display
+                            if (moveDisplay) {
+                                const currentXPx = Math.round(plotOffsetLng / 0.0001);
+                                const currentYPx = Math.round(-plotOffsetLat / 0.0001);
+                                moveDisplay.innerHTML = 'Current: X=' + currentXPx + 'px, Y=' + currentYPx + 'px';
+                            }
                             applyPlotTransform();
                             return false;
                         };
@@ -5048,8 +4840,15 @@ elif current_step == 8:
                             e.preventDefault();
                             e.stopPropagation();
                             console.log('Plot move down clicked!');
-                            plotOffsetLat -= 0.0001; // Move south (decrease latitude)
-                            if (moveYInput) moveYInput.value = Math.round(-plotOffsetLat / 0.0001);
+                            const stepValue = parseFloat(moveYInput?.value || 10) || 10;
+                            // Convert pixels to degrees and add (move south)
+                            plotOffsetLat -= stepValue * 0.0001;
+                            // Update display
+                            if (moveDisplay) {
+                                const currentXPx = Math.round(plotOffsetLng / 0.0001);
+                                const currentYPx = Math.round(-plotOffsetLat / 0.0001);
+                                moveDisplay.innerHTML = 'Current: X=' + currentXPx + 'px, Y=' + currentYPx + 'px';
+                            }
                             applyPlotTransform();
                             return false;
                         };
@@ -5061,8 +4860,15 @@ elif current_step == 8:
                             e.preventDefault();
                             e.stopPropagation();
                             console.log('Plot move left clicked!');
-                            plotOffsetLng -= 0.0001; // Move west (decrease longitude)
-                            if (moveXInput) moveXInput.value = Math.round(plotOffsetLng / 0.0001);
+                            const stepValue = parseFloat(moveXInput?.value || 10) || 10;
+                            // Convert pixels to degrees and subtract (move west)
+                            plotOffsetLng -= stepValue * 0.0001;
+                            // Update display
+                            if (moveDisplay) {
+                                const currentXPx = Math.round(plotOffsetLng / 0.0001);
+                                const currentYPx = Math.round(-plotOffsetLat / 0.0001);
+                                moveDisplay.innerHTML = 'Current: X=' + currentXPx + 'px, Y=' + currentYPx + 'px';
+                            }
                             applyPlotTransform();
                             return false;
                         };
@@ -5074,8 +4880,15 @@ elif current_step == 8:
                             e.preventDefault();
                             e.stopPropagation();
                             console.log('Plot move right clicked!');
-                            plotOffsetLng += 0.0001; // Move east (increase longitude)
-                            if (moveXInput) moveXInput.value = Math.round(plotOffsetLng / 0.0001);
+                            const stepValue = parseFloat(moveXInput?.value || 10) || 10;
+                            // Convert pixels to degrees and add (move east)
+                            plotOffsetLng += stepValue * 0.0001;
+                            // Update display
+                            if (moveDisplay) {
+                                const currentXPx = Math.round(plotOffsetLng / 0.0001);
+                                const currentYPx = Math.round(-plotOffsetLat / 0.0001);
+                                moveDisplay.innerHTML = 'Current: X=' + currentXPx + 'px, Y=' + currentYPx + 'px';
+                            }
                             applyPlotTransform();
                             return false;
                         };
@@ -5812,7 +5625,7 @@ elif current_step == 8:
         with col_btn1:
             st.write("")  # Spacer to align with controls panel above
         with col_btn2:
-            if st.button("Previous", type="primary", key="prev_step8"):
+            if st.button("Prev", type="primary", key="prev_step8"):
                 st.session_state.current_step = 7  # Go back to Step 7
                 st.rerun()
         with col_btn3:

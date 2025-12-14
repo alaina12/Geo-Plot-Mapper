@@ -871,6 +871,11 @@
                     return;
                 }
 
+                // CRITICAL: Verify we're loading all points
+                if (plot.points.length < 3) {
+                    console.error('❌ ERROR: Plot', plot.id, 'has less than 3 points! This should not happen.');
+                }
+
                 // Scale and offset points to match background image
                 const points = plot.points.map(point => ({
                     x: (point.x * scale) + offsetX,
@@ -879,6 +884,8 @@
 
                 // Store original pixel coordinates (before scaling)
                 const originalPoints = plot.points.map(p => ({x: p.x, y: p.y}));
+                
+                console.log('Created', points.length, 'scaled points for plot', plot.id);
 
                 // Create circles (red dots) for each corner point
                 const circles = [];
@@ -1290,19 +1297,39 @@
                 }
             }
             
-            // Process all plots in plotsData (existing plots)
+            // Process all plots in plotsData (existing plots, newly created ones, and modified ones)
+            console.log('=== SAVE CHANGES ===');
+            console.log('Total plots in plotsData:', plotsData.length);
+            console.log('Plots in plotsData:', plotsData.map(p => ({ id: p.id, plot_number: p.plot_number, points_count: p.points ? p.points.length : 0 })));
+            console.log('Plots in plotPoints:', Object.keys(plotPoints));
+            
             plotsData.forEach(plot => {
                 const circles = plotPoints[plot.id];
                 if (!circles || circles.length === 0) {
                     // Plot was deleted or has no points - skip it
+                    console.warn('⚠️ Plot', plot.id, 'has no circles in plotPoints, skipping');
                     return;
+                }
+
+                console.log('✓ Processing plot:', plot.id, 'with', circles.length, 'circles');
+                
+                // CRITICAL: Verify we have all circles
+                if (circles.length !== plot.points?.length) {
+                    console.warn('⚠️ MISMATCH: plotPoints has', circles.length, 'circles but plotsData has', plot.points?.length, 'points for plot', plot.id);
+                    console.warn('This means some points were lost! Check the save/load process.');
                 }
 
                 // Convert canvas coordinates back to original pixel coordinates
                 // Always use stored originalX/originalY which are updated during movement
                 // These represent the true original image coordinates
-                const updatedPoints = circles.map(circle => {
+                const updatedPoints = circles.map((circle, idx) => {
                     let originalX, originalY;
+                    
+                    // Get scale/offset from circle if available, otherwise use global
+                    // CRITICAL: Use circle's own scale/offset to preserve its position
+                    const circleScale = circle.scale || bgScale;
+                    const circleOffsetX = circle.offsetX !== undefined ? circle.offsetX : bgOffsetX;
+                    const circleOffsetY = circle.offsetY !== undefined ? circle.offsetY : bgOffsetY;
                     
                     // Always use stored original coordinates if available
                     // These are updated in real-time when circles are moved
@@ -1310,16 +1337,17 @@
                         originalX = circle.originalX;
                         originalY = circle.originalY;
                     } else {
-                        // Fallback: calculate from current canvas position
-                        // This should only happen for circles that haven't been moved
+                        // Fallback: calculate from current canvas position using circle's own scale/offset
+                        // This preserves the circle's position correctly
                         let canvasX = circle.left;
                         let canvasY = circle.top;
-                        originalX = Math.round((canvasX - bgOffsetX) / bgScale);
-                        originalY = Math.round((canvasY - bgOffsetY) / bgScale);
+                        originalX = Math.round((canvasX - circleOffsetX) / circleScale);
+                        originalY = Math.round((canvasY - circleOffsetY) / circleScale);
                         
                         // Store for future use
                         circle.originalX = originalX;
                         circle.originalY = originalY;
+                        console.log('Calculated original coords for circle', idx, 'in plot', plot.id, ':', originalX, originalY, 'using scale:', circleScale, 'offset:', circleOffsetX, circleOffsetY);
                     }
                     
                     return {
@@ -1328,12 +1356,19 @@
                     };
                 });
 
+                // CRITICAL: Verify we're saving all points
+                if (updatedPoints.length !== circles.length) {
+                    console.error('❌ ERROR: Mismatch! We have', circles.length, 'circles but only', updatedPoints.length, 'points to save!');
+                }
+                
                 updatedPlots.push({
                     id: plot.id,
                     plot_number: plot.plot_number,
                     points: updatedPoints
                 });
             });
+            
+            console.log('Total plots to save:', updatedPlots.length);
 
             // Store in localStorage with a unique key
             const storageKey = 'editable_plot_updates_' + Date.now();
@@ -2024,37 +2059,37 @@
                 }
             }
             
-            // Check if the new point is too close to existing points (prevent interconnection)
-            // But allow points near selected existing circles (since we're using them)
-            const minDistance = 20; // Minimum distance in canvas pixels
+            // Check if the new point is too close to existing points from OTHER plots
+            // CRITICAL: Allow points to be close to each other when creating the same plot
+            // Only prevent points that are too close to points from DIFFERENT plots
+            const minDistance = 15; // Minimum distance in canvas pixels (reduced to allow closer points)
             let tooClose = false;
             
-            // Check against all existing plot points (except selected ones)
+            // Check against all existing plot points from OTHER plots (not the current plot being created)
+            // This prevents accidentally clicking on points from other plots, but allows creating points close together
             Object.values(plotPoints).flat().forEach(existingCircle => {
+                // Skip if it's a new plot point (same plot being created) or a selected existing circle
                 if (existingCircle.plotId !== 'new_plot' && !selectedExistingCircles.includes(existingCircle)) {
                     const dx = pointer.x - existingCircle.left;
                     const dy = pointer.y - existingCircle.top;
                     const distance = Math.sqrt(dx * dx + dy * dy);
                     if (distance < minDistance) {
                         tooClose = true;
+                        console.log('Point too close to existing point from plot', existingCircle.plotId, 'distance:', distance);
                     }
                 }
             });
             
-            // Check against other new plot points being created
-            newPlotPoints.forEach(existingNewPoint => {
-                const dx = pointer.x - existingNewPoint.left;
-                const dy = pointer.y - existingNewPoint.top;
-                const distance = Math.sqrt(dx * dx + dy * dy);
-                if (distance < minDistance) {
-                    tooClose = true;
-                }
-            });
+            // CRITICAL: DO NOT check against other newPlotPoints - allow creating points close together
+            // This was preventing users from adding multiple points to the same plot
+            // Users should be able to create points as close as they want when building a plot
             
             if (tooClose) {
-                console.log('Point too close to existing point, skipping');
-                return; // Don't create point if too close
+                console.log('Point too close to existing point from another plot, skipping');
+                return; // Don't create point if too close to points from other plots
             }
+            
+            console.log('Creating new point', newPlotPoints.length + 1, 'at:', pointer.x, pointer.y);
             
             // Create a new point - ensure it's on top of everything
             // Calculate original coordinates from canvas pointer position
@@ -2297,9 +2332,256 @@
             });
         }
         
+        function modifyExistingPlot(plotId, selectedCircles, newPoints) {
+            console.log('modifyExistingPlot called for plotId:', plotId, 'with', selectedCircles.length, 'selected circles and', newPoints.length, 'new points');
+            
+            // Get all existing circles for this plot
+            const existingCircles = plotPoints[plotId] || [];
+            console.log('Existing circles for plot', plotId, ':', existingCircles.length);
+            
+            // Combine existing circles with new points
+            // CRITICAL: Keep ALL existing circles - they're all part of the modified shape
+            const allCircles = [...existingCircles, ...newPoints];
+            console.log('Total circles after combining:', allCircles.length);
+            
+            // Get scale and offset for coordinate conversion
+            let scale = 1;
+            let offsetX = 0;
+            let offsetY = 0;
+            
+            if (existingCircles.length > 0) {
+                scale = existingCircles[0].scale || 1;
+                offsetX = existingCircles[0].offsetX || 0;
+                offsetY = existingCircles[0].offsetY || 0;
+            } else {
+                const allExistingCircles = Object.values(plotPoints).flat();
+                if (allExistingCircles.length > 0) {
+                    scale = allExistingCircles[0].scale || 1;
+                    offsetX = allExistingCircles[0].offsetX || 0;
+                    offsetY = allExistingCircles[0].offsetY || 0;
+                }
+            }
+            
+            // Convert all circles to points with original coordinates
+            // CRITICAL: Use each circle's own scale/offset if available
+            const points = allCircles.map(circle => {
+                let originalX, originalY;
+                
+                // Use circle's own scale/offset if available, otherwise use global
+                const circleScale = circle.scale || scale;
+                const circleOffsetX = circle.offsetX !== undefined ? circle.offsetX : offsetX;
+                const circleOffsetY = circle.offsetY !== undefined ? circle.offsetY : offsetY;
+                
+                if (circle.originalX !== undefined && circle.originalY !== undefined) {
+                    originalX = circle.originalX;
+                    originalY = circle.originalY;
+                } else {
+                    // Calculate using circle's own scale/offset
+                    originalX = Math.round((circle.left - circleOffsetX) / circleScale);
+                    originalY = Math.round((circle.top - circleOffsetY) / circleScale);
+                    // Store for future use
+                    circle.originalX = originalX;
+                    circle.originalY = originalY;
+                }
+                return {
+                    x: originalX,
+                    y: originalY,
+                    canvasX: circle.left,
+                    canvasY: circle.top,
+                    circle: circle
+                };
+            });
+            
+            // Sort points in clockwise order around centroid
+            const centerX = points.reduce((sum, p) => sum + p.canvasX, 0) / points.length;
+            const centerY = points.reduce((sum, p) => sum + p.canvasY, 0) / points.length;
+            
+            points.sort((a, b) => {
+                const angleA = Math.atan2(a.canvasY - centerY, a.canvasX - centerX);
+                const angleB = Math.atan2(b.canvasY - centerY, b.canvasX - centerX);
+                return angleA - angleB;
+            });
+            
+            // Update new points to have the correct plotId and properties
+            // CRITICAL: Set all required properties for saving to work correctly
+            newPoints.forEach((newCircle, idx) => {
+                // Get the circle's current scale/offset if it exists (from when it was created)
+                const circleScale = newCircle.scale || scale;
+                const circleOffsetX = newCircle.offsetX !== undefined ? newCircle.offsetX : offsetX;
+                const circleOffsetY = newCircle.offsetY !== undefined ? newCircle.offsetY : offsetY;
+                
+                // Ensure originalX and originalY are set (recalculate if missing)
+                if (newCircle.originalX === undefined || newCircle.originalY === undefined) {
+                    newCircle.originalX = Math.round((newCircle.left - circleOffsetX) / circleScale);
+                    newCircle.originalY = Math.round((newCircle.top - circleOffsetY) / circleScale);
+                }
+                
+                newCircle.set({
+                    plotId: plotId,
+                    fill: '#FF0000', // Red like existing points
+                    stroke: '#FFFFFF',
+                    strokeWidth: 2
+                });
+                
+                // CRITICAL: Store properties directly on circle object (essential for saving)
+                newCircle.scale = circleScale;
+                newCircle.offsetX = circleOffsetX;
+                newCircle.offsetY = circleOffsetY;
+                
+                // Add event handlers (same as existing plots)
+                let circleMoved = false;
+                let circleMouseDownTime = 0;
+                
+                newCircle.set({
+                    evented: true,
+                    selectable: true,
+                    hoverCursor: 'pointer',
+                    perPixelTargetFind: true
+                });
+                
+                // Add comprehensive handlers (same as existing plots)
+                newCircle.on('mousedown', function(e) {
+                    circleMoved = false;
+                    circleMouseDownTime = Date.now();
+                    
+                    if (e.e.ctrlKey || e.e.metaKey) {
+                        e.e.stopPropagation();
+                        e.e.stopImmediatePropagation();
+                        const isAlreadySelected = selectedDotsForMove.includes(this);
+                        if (isAlreadySelected) {
+                            const index = selectedDotsForMove.indexOf(this);
+                            selectedDotsForMove.splice(index, 1);
+                            this.set({ stroke: '#FFFFFF', strokeWidth: 2 });
+                        } else {
+                            selectedDotsForMove.push(this);
+                            this.set({ stroke: '#4CAF50', strokeWidth: 4 });
+                        }
+                        this.setCoords();
+                        canvas.renderAll();
+                        updateMoveButtonCounter();
+                        return false;
+                    }
+                    
+                    if (mergeMode) {
+                        e.e.stopPropagation();
+                        e.e.stopImmediatePropagation();
+                        togglePointForMerge(this);
+                        return false;
+                    } else if (createMode) {
+                        e.e.stopPropagation();
+                        e.e.stopImmediatePropagation();
+                        return false;
+                    }
+                });
+                
+                newCircle.on('mouseup', function(e) {
+                    if (mergeMode) {
+                        e.e.stopPropagation();
+                        e.e.stopImmediatePropagation();
+                        return false;
+                    } else if (!createMode && !mergeMode && !circleMoved) {
+                        const clickDuration = Date.now() - circleMouseDownTime;
+                        if (clickDuration < 300) {
+                            e.e.stopPropagation();
+                            e.e.stopImmediatePropagation();
+                            if (this.plotId) {
+                                selectPlotForDelete(this.plotId);
+                            }
+                            return false;
+                        }
+                    }
+                });
+                
+                newCircle.on('moving', function(e) {
+                    circleMoved = true;
+                    const storedScale = this.scale || 1;
+                    const storedOffsetX = this.offsetX || 0;
+                    const storedOffsetY = this.offsetY || 0;
+                    this.originalX = Math.round((this.left - storedOffsetX) / storedScale);
+                    this.originalY = Math.round((this.top - storedOffsetY) / storedScale);
+                    this.setCoords();
+                    if (mode === 'lines') {
+                        updatePolygon(this.plotId);
+                    }
+                    canvas.renderAll();
+                });
+                
+                newCircle.on('modified', function() {
+                    if (mode === 'lines') {
+                        updatePolygon(this.plotId);
+                    }
+                });
+            });
+            
+            // Update plotPoints with reordered circles
+            const reorderedCircles = points.map(p => p.circle);
+            plotPoints[plotId] = reorderedCircles;
+            
+            console.log('✅ Modified plot', plotId, '- Updated plotPoints with', reorderedCircles.length, 'circles');
+            console.log('   All circles:', reorderedCircles.map((c, i) => ({ idx: i, plotId: c.plotId, left: c.left, top: c.top, originalX: c.originalX, originalY: c.originalY })));
+            
+            // Update plotsData - CRITICAL: This ensures the modified plot is saved
+            const plotData = plotsData.find(p => p.id === plotId);
+            if (plotData) {
+                const updatedPoints = points.map(p => ({ x: p.x, y: p.y }));
+                plotData.points = updatedPoints;
+                console.log('✅ Updated plotsData for', plotId, 'with', updatedPoints.length, 'points');
+                console.log('   Points data:', JSON.stringify(updatedPoints, null, 2));
+                
+                // CRITICAL: Verify counts match
+                if (updatedPoints.length !== reorderedCircles.length) {
+                    console.error('❌ ERROR: Mismatch! plotPoints has', reorderedCircles.length, 'circles but plotsData has', updatedPoints.length, 'points!');
+                }
+            } else {
+                console.error('❌ ERROR: Could not find plot', plotId, 'in plotsData!');
+                console.log('Available plots in plotsData:', plotsData.map(p => p.id));
+            }
+            
+            // Update polygon if in lines mode
+            if (mode === 'lines') {
+                updatePolygon(plotId);
+            }
+            
+            // Clear create mode state
+            newPlotPoints = [];
+            selectedExistingCircles = [];
+            createMode = false;
+            
+            const createBtn = document.getElementById('create-btn');
+            const deleteBtn = document.getElementById('delete-btn');
+            if (createBtn) {
+                createBtn.textContent = 'Create Plot';
+                createBtn.style.backgroundColor = '#4CAF50';
+            }
+            canvas.defaultCursor = 'default';
+            canvas.hoverCursor = 'default';
+            canvas.off('mouse:down', handleCreatePlotClick);
+            canvas.selection = true;
+            if (deleteBtn) deleteBtn.style.opacity = '1';
+            
+            canvas.renderAll();
+            
+            console.log('Modified plot', plotId, 'by adding', newPoints.length, 'new point(s)');
+        }
+        
         function createNewPlot() {
             // Combine selected existing circles with newly created points
             const allPoints = [...selectedExistingCircles, ...newPlotPoints];
+            
+            // CRITICAL: Check if all selected existing circles belong to the same plot
+            // If so, modify that existing plot instead of creating a new one
+            if (selectedExistingCircles.length > 0 && newPlotPoints.length > 0) {
+                // Get unique plot IDs from selected circles
+                const selectedPlotIds = new Set(selectedExistingCircles.map(c => c.plotId).filter(id => id && id !== 'new_plot'));
+                
+                // If all selected circles belong to the same existing plot, modify that plot
+                if (selectedPlotIds.size === 1) {
+                    const plotIdToModify = Array.from(selectedPlotIds)[0];
+                    console.log('Modifying existing plot:', plotIdToModify, 'by adding', newPlotPoints.length, 'new point(s)');
+                    modifyExistingPlot(plotIdToModify, selectedExistingCircles, newPlotPoints);
+                    return;
+                }
+            }
             
             // Need at least 3 points total (can be mix of existing and new)
             if (allPoints.length < 3) {
@@ -2533,15 +2815,23 @@
                 
                 pendingPlotData.points = pendingPlotData.canvasPoints.map(circle => {
                     // For all circles (existing and new), use their stored original coordinates
+                    // CRITICAL: Use each circle's own scale/offset if available
                     let originalX, originalY;
                     if (circle.originalX !== undefined && circle.originalY !== undefined) {
                         // Use stored original coordinates (most accurate)
                         originalX = circle.originalX;
                         originalY = circle.originalY;
                     } else {
-                        // Fallback: convert from canvas coordinates to original using stored scale/offset
-                        originalX = Math.round((circle.left - offsetX) / scale);
-                        originalY = Math.round((circle.top - offsetY) / scale);
+                        // Fallback: convert from canvas coordinates to original
+                        // Use circle's own scale/offset if available, otherwise use global
+                        const circleScale = circle.scale || scale;
+                        const circleOffsetX = circle.offsetX !== undefined ? circle.offsetX : offsetX;
+                        const circleOffsetY = circle.offsetY !== undefined ? circle.offsetY : offsetY;
+                        originalX = Math.round((circle.left - circleOffsetX) / circleScale);
+                        originalY = Math.round((circle.top - circleOffsetY) / circleScale);
+                        // Store for future use
+                        circle.originalX = originalX;
+                        circle.originalY = originalY;
                     }
                     return { x: originalX, y: originalY };
                 });
@@ -2551,15 +2841,20 @@
             autoRenumberPlots(assignedNumber);
             
             // Create new plot data with assigned number
+            // CRITICAL: Use the points calculated from pendingPlotData (with original coordinates)
             const newPlot = {
                 id: 'Plot ' + assignedNumber,
                 plot_number: assignedNumber,
-                points: pendingPlotData.points
+                points: pendingPlotData.points  // These are already in original coordinate space
             };
+            
+            console.log('Creating new plot:', newPlot.id, 'with', newPlot.points.length, 'points:', newPlot.points);
             
             // Add new plot to plotsData and sort
             plotsData.push(newPlot);
             plotsData.sort((a, b) => (a.plot_number || 0) - (b.plot_number || 0));
+            
+            console.log('plotsData now has', plotsData.length, 'plots. New plot added:', newPlot.id);
             
             // Reorder circles to match the sorted order (using canvas coordinates)
             // Use the same scale/offset as existing plots (stored in circles)
@@ -2586,15 +2881,23 @@
             // Create points with canvas coordinates for sorting
             const pointsWithCanvas = pendingPlotData.canvasPoints.map(circle => {
                 // For all circles (existing and new), use their stored original coordinates
+                // CRITICAL: Use each circle's own scale/offset if available
                 let originalX, originalY;
                 if (circle.originalX !== undefined && circle.originalY !== undefined) {
                     // Use stored original coordinates (most accurate)
                     originalX = circle.originalX;
                     originalY = circle.originalY;
                 } else {
-                    // Fallback: convert from canvas coordinates to original using stored scale/offset
-                    originalX = Math.round((circle.left - offsetX) / scale);
-                    originalY = Math.round((circle.top - offsetY) / scale);
+                    // Fallback: convert from canvas coordinates to original
+                    // Use circle's own scale/offset if available, otherwise use global
+                    const circleScale = circle.scale || scale;
+                    const circleOffsetX = circle.offsetX !== undefined ? circle.offsetX : offsetX;
+                    const circleOffsetY = circle.offsetY !== undefined ? circle.offsetY : offsetY;
+                    originalX = Math.round((circle.left - circleOffsetX) / circleScale);
+                    originalY = Math.round((circle.top - circleOffsetY) / circleScale);
+                    // Store for future use
+                    circle.originalX = originalX;
+                    circle.originalY = originalY;
                 }
                 return {
                     x: originalX,
@@ -2625,49 +2928,194 @@
                                        pendingPlotData.selectedExistingCircles.includes(circle);
                 
                 if (!isExistingCircle) {
-                    // Newly created circle - assign to new plot
+                    // NEWLY CREATED circle - assign to new plot and set all required properties
+                    // CRITICAL: Only modify NEW circles, never touch existing ones
+                    
+                    // Get the circle's current scale/offset if it exists (from when it was created)
+                    const circleScale = circle.scale || scale;
+                    const circleOffsetX = circle.offsetX !== undefined ? circle.offsetX : offsetX;
+                    const circleOffsetY = circle.offsetY !== undefined ? circle.offsetY : offsetY;
+                    
+                    // Ensure originalX and originalY are set (recalculate if missing)
+                    if (circle.originalX === undefined || circle.originalY === undefined) {
+                        circle.originalX = Math.round((circle.left - circleOffsetX) / circleScale);
+                        circle.originalY = Math.round((circle.top - circleOffsetY) / circleScale);
+                    }
+                    
+                    // Assign to new plot and set properties
                     circle.set({
                         fill: '#FF0000',
                         plotId: newPlot.id,
                         pointIndex: idx
                     });
+                    
+                    // Store properties directly on circle object (critical for saving)
+                    circle.scale = circleScale;
+                    circle.offsetX = circleOffsetX;
+                    circle.offsetY = circleOffsetY;
                 } else {
-                    // Existing circle - keep original plot ID, just reset color
+                    // EXISTING circle - DO NOT MODIFY any properties, just reset color
+                    // Preserve all existing properties (scale, offsetX, offsetY, originalX, originalY)
+                    // This prevents existing plots from moving
                     circle.set({
                         fill: '#FF0000', // Reset to red
                         stroke: '#FFFFFF',
                         strokeWidth: 2
                     });
-                    // Keep original plotId - don't change it
+                    // DO NOT touch scale, offsetX, offsetY, originalX, originalY - they're already correct
                 }
                 
-                // Add click handler for merge mode and delete mode (same as existing plots)
+                // Track if circle was moved (to distinguish click from drag)
+                let circleMoved = false;
+                let circleMouseDownTime = 0;
+                
+                // Make circle easily clickable for selection (same as existing plots)
+                circle.set({
+                    evented: true,
+                    selectable: true,  // Allow selection for dragging
+                    hoverCursor: 'pointer',
+                    perPixelTargetFind: true  // Better click detection
+                });
+                
+                // Add comprehensive click handler (same as existing plots)
                 circle.on('mousedown', function(e) {
+                    circleMoved = false;
+                    circleMouseDownTime = Date.now();
+                    
+                    // Handle Ctrl+Click for multi-dot selection (for pixel move feature)
+                    if (e.e.ctrlKey || e.e.metaKey) {
+                        e.e.stopPropagation();
+                        e.e.stopImmediatePropagation();
+                        
+                        const isAlreadySelected = selectedDotsForMove.includes(this);
+                        
+                        if (isAlreadySelected) {
+                            // Deselect
+                            const index = selectedDotsForMove.indexOf(this);
+                            selectedDotsForMove.splice(index, 1);
+                            this.set({ stroke: '#FFFFFF', strokeWidth: 2 });
+                        } else {
+                            // Select
+                            selectedDotsForMove.push(this);
+                            this.set({ stroke: '#4CAF50', strokeWidth: 4 }); // Green highlight
+                        }
+                        
+                        this.setCoords();
+                        canvas.renderAll();
+                        console.log('Selected dots for move:', selectedDotsForMove.length);
+                        updateMoveButtonCounter();
+                        return false;
+                    }
+                    
                     if (mergeMode) {
                         e.e.stopPropagation();
                         e.e.stopImmediatePropagation();
                         togglePointForMerge(this);
                         return false;
-                    } else if (deleteMode && mode === 'points') {
+                    } else if (createMode) {
+                        // In create mode, handle circle selection for new plot
                         e.e.stopPropagation();
                         e.e.stopImmediatePropagation();
-                        selectPlotForDelete(this.plotId);
+                        
+                        // Check if already selected
+                        const isAlreadySelected = selectedExistingCircles.includes(this);
+                        
+                        if (isAlreadySelected) {
+                            // Deselect
+                            const index = selectedExistingCircles.indexOf(this);
+                            selectedExistingCircles.splice(index, 1);
+                            this.set({
+                                fill: '#FF0000',
+                                stroke: '#FFFFFF',
+                                strokeWidth: 2
+                            });
+                            this.setCoords();
+                            console.log('Deselected existing circle. Selected:', selectedExistingCircles.length);
+                        } else {
+                            // Select (max 4)
+                            if (selectedExistingCircles.length < 4) {
+                                selectedExistingCircles.push(this);
+                                this.set({
+                                    fill: '#00FF00', // Green for selected
+                                    stroke: '#FFFFFF',
+                                    strokeWidth: 3
+                                });
+                                this.setCoords();
+                                console.log('Selected existing circle. Selected:', selectedExistingCircles.length, '/ 4');
+                            } else {
+                                alert('You can select up to 4 existing dots. Click on a selected dot to deselect it, or create additional points.');
+                                return false;
+                            }
+                        }
+                        
+                        updateCreateButtonText();
+                        canvas.renderAll();
                         return false;
+                    } else if (!createMode && !mergeMode) {
+                        // Allow normal Fabric.js selection and dragging for dots
+                        // Don't stop propagation - let Fabric.js handle selection and dragging
+                        // Plot selection will be handled in mouseup if it was just a click (not drag)
                     }
                 });
                 
-                // Also handle mouseup for better responsiveness
+                // Handle mouseup for plot selection (only if not dragged) - same as existing plots
                 circle.on('mouseup', function(e) {
                     if (mergeMode) {
                         e.e.stopPropagation();
                         e.e.stopImmediatePropagation();
                         return false;
+                    } else if (!createMode && !mergeMode && !circleMoved) {
+                        // Only select if it was a click (not a drag)
+                        const clickDuration = Date.now() - circleMouseDownTime;
+                        if (clickDuration < 300) { // Quick click, not a drag
+                            e.e.stopPropagation();
+                            e.e.stopImmediatePropagation();
+                            console.log('Circle clicked (not dragged), selecting plot:', this.plotId);
+                            if (this.plotId) {
+                                selectPlotForDelete(this.plotId);
+                            } else {
+                                console.warn('Circle has no plotId:', this);
+                            }
+                            return false;
+                        }
+                    }
+                });
+                
+                // Make circles draggable - same as existing plots
+                circle.on('moving', function(e) {
+                    circleMoved = true; // Track that circle was moved
+                    
+                    // Update original coordinates when circle is moved
+                    const storedScale = this.scale || 1;
+                    const storedOffsetX = this.offsetX || 0;
+                    const storedOffsetY = this.offsetY || 0;
+                    
+                    // Calculate original coordinates using the stored scale/offset
+                    this.originalX = Math.round((this.left - storedOffsetX) / storedScale);
+                    this.originalY = Math.round((this.top - storedOffsetY) / storedScale);
+                    
+                    // CRITICAL: Update selection box coordinates to prevent offset
+                    this.setCoords();
+                    
+                    // CRITICAL: Update polygon in real-time if in lines mode
+                    if (mode === 'lines') {
+                        updatePolygon(this.plotId);
+                    }
+                    canvas.renderAll();
+                });
+                
+                // Handle modified event - same as existing plots
+                circle.on('modified', function() {
+                    if (mode === 'lines') {
+                        updatePolygon(this.plotId);
                     }
                 });
             });
             
             // Store reordered circles in plotPoints
+            // CRITICAL: This links the plot ID to its circles for saving
             plotPoints[newPlot.id] = reorderedCircles;
+            console.log('Stored', reorderedCircles.length, 'circles in plotPoints[' + newPlot.id + ']');
             
             // If in lines mode, create polygon
             if (mode === 'lines') {
@@ -2707,37 +3155,30 @@
                 polygon.originalLeft = minX;
                 polygon.originalTop = minY;
                 
-                // Add click handler for delete mode
+                // Add click handler for plot selection (same as existing plots)
                 polygon.on('mousedown', function(e) {
-                    if (deleteMode) {
+                    if (!createMode && !mergeMode) {
                         e.e.stopPropagation();
+                        e.e.stopImmediatePropagation();
+                        console.log('Polygon clicked, selecting plot:', newPlot.id);
                         selectPlotForDelete(newPlot.id);
+                        return false;
                     }
                 });
                 
-                // Add event handlers for real-time polygon updates
-                circlesForPolygon.forEach(circle => {
-                    circle.on('moving', function(e) {
-                        // Update original coordinates when circle is moved
-                        const storedScale = this.scale || 1;
-                        const storedOffsetX = this.offsetX || 0;
-                        const storedOffsetY = this.offsetY || 0;
-                        
-                        this.originalX = Math.max(0, Math.round((this.left - storedOffsetX) / storedScale));
-                        this.originalY = Math.max(0, Math.round((this.top - storedOffsetY) / storedScale));
-                        
-                        // Update selection box coordinates to prevent offset
-                        // CRITICAL: Must call setCoords() to ensure selection boxes align correctly
-                        this.setCoords();
-                        
-                        // Update polygon in real-time using updatePolygon function
-                        // This ensures proper coordinate handling with absolute left/top
-                        updatePolygon(newPlot.id);
-                        canvas.renderAll();
-                    });
-                    
-                    circle.on('modified', () => updatePolygon(newPlot.id));
+                // Also handle mouseup for better click detection (same as existing plots)
+                polygon.on('mouseup', function(e) {
+                    if (!createMode && !mergeMode) {
+                        e.e.stopPropagation();
+                        e.e.stopImmediatePropagation();
+                        console.log('Polygon mouseup, selecting plot:', newPlot.id);
+                        selectPlotForDelete(newPlot.id);
+                        return false;
+                    }
                 });
+                
+                // Note: Circle event handlers (moving, modified, mousedown, mouseup) are already
+                // added above for all circles in reorderedCircles, so no need to add them again here
                 
                 plotObjects.push(polygon);
                 canvas.add(polygon);

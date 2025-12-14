@@ -850,12 +850,28 @@ def calculate_geocoordinates(plots, ref_plot_id, ref_corner, ref_lat, ref_lon, p
     
     for plot in plots:
         if plot['plot_id'] == ref_plot_id:
-            ref_x_px = plot['corners'][ref_corner]['x']
-            ref_y_px = plot['corners'][ref_corner]['y']
+            # CRITICAL: Use 'points' array if available, otherwise use corners
+            points = plot.get('points', [])
+            if points:
+                # Find the point with the matching label
+                corner_idx = ord(ref_corner) - ord('A')
+                if corner_idx < len(points):
+                    ref_x_px = points[corner_idx].get('x', 0)
+                    ref_y_px = points[corner_idx].get('y', 0)
+                else:
+                    # Fallback to corners if point not found in points array
+                    if ref_corner in plot.get('corners', {}):
+                        ref_x_px = plot['corners'][ref_corner]['x']
+                        ref_y_px = plot['corners'][ref_corner]['y']
+            else:
+                # Fallback: Use corners
+                if ref_corner in plot.get('corners', {}):
+                    ref_x_px = plot['corners'][ref_corner]['x']
+                    ref_y_px = plot['corners'][ref_corner]['y']
             break
     
     if ref_x_px is None:
-        st.error(f"Reference plot '{ref_plot_id}' not found!")
+        st.error(f"Reference plot '{ref_plot_id}' with corner '{ref_corner}' not found!")
         return []
     
     FT_TO_M = 0.3048
@@ -874,16 +890,60 @@ def calculate_geocoordinates(plots, ref_plot_id, ref_corner, ref_lat, ref_lon, p
     for plot in plots:
         new_corners = {}
         has_invalid_coords = False
-        for corner_label, coords in plot['corners'].items():
-            lat = origin_lat - (coords['y'] * lat_deg_per_px)
-            lon = origin_lon + (coords['x'] * lon_deg_per_px)
+        
+        # CRITICAL: Use 'points' array if available (supports more than 4 points), 
+        # otherwise use corners (for backward compatibility)
+        points = plot.get('points', [])
+        if not points:
+            # Fallback: Convert corners to points
+            corners = plot.get('corners', {})
+            corner_labels = ['A', 'B', 'C', 'D']
+            points = []
+            for label in corner_labels:
+                if label in corners:
+                    points.append({
+                        'x': corners[label].get('x', 0),
+                        'y': corners[label].get('y', 0)
+                    })
+        
+        # Generate column labels (A, B, C, D, E, F, ...)
+        corner_labels = ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'I', 'J', 'K', 'L', 'M', 'N', 'O', 'P']
+        
+        # Process all points and assign labels
+        for idx, point in enumerate(points):
+            # Always use index-based assignment (points array doesn't have labels)
+            if idx < len(corner_labels):
+                corner_label = corner_labels[idx]
+            else:
+                # For points beyond P, use extended labels
+                corner_label = chr(ord('Q') + (idx - len(corner_labels)))
+            
+            x = point.get('x', 0)
+            y = point.get('y', 0)
+            
+            # Debug: Log for plot 71
+            if plot.get('plot_number') == 71:
+                print(f"   Point {idx} ({corner_label}): x={x}, y={y}")
+            
+            # Calculate lat/lon for all points (even if x=0, y=0, as they might be valid)
+            lat = origin_lat - (y * lat_deg_per_px)
+            lon = origin_lon + (x * lon_deg_per_px)
+            
+            # Warn if coordinates are 0, but still calculate lat/lon
+            if x == 0 and y == 0:
+                print(f"⚠️ Plot {plot.get('plot_number')}: Point {corner_label} has zero coordinates, but calculating lat/lon anyway")
             
             # Check for invalid coordinates
             if not (isinstance(lat, (int, float)) and isinstance(lon, (int, float))):
                 has_invalid_coords = True
-                print(f"⚠️ Plot {plot['plot_number']}: Invalid coordinates at corner {corner_label}")
+                print(f"⚠️ Plot {plot.get('plot_number')}: Invalid coordinates at point {corner_label}")
+                continue
             
             new_corners[corner_label] = {"lat": lat, "lon": lon}
+            
+            # Debug: Log calculated lat/lon for plot 71
+            if plot.get('plot_number') == 71:
+                print(f"   Calculated {corner_label}: lat={lat:.6f}, lon={lon:.6f}")
         
         # Always include plot, even if coordinates seem invalid (let map handle it)
         plots_with_latlon.append({
@@ -891,18 +951,6 @@ def calculate_geocoordinates(plots, ref_plot_id, ref_corner, ref_lat, ref_lon, p
             "plot_number": plot['plot_number'],
             "corners": new_corners
         })
-        
-        # Debug: Check plot 75 specifically
-        if plot['plot_number'] == 75:
-            print(f"🔍 Plot 75 DEBUG: plot_id={plot['plot_id']}, corners={plot['corners']}")
-            print(f"   Geo corners: {new_corners}")
-            print(f"   Has invalid coords: {has_invalid_coords}")
-    
-    # Debug: List all plot numbers in geo_plots
-    plot_nums = sorted([p['plot_number'] for p in plots_with_latlon])
-    print(f"📍 Geo plots created: {len(plots_with_latlon)} plots with numbers: {plot_nums}")
-    plot_75_in_list = any(p['plot_number'] == 75 for p in plots_with_latlon)
-    print(f"   Plot 75 in geo_plots: {plot_75_in_list}")
     
     return plots_with_latlon
 
@@ -1780,17 +1828,24 @@ elif current_step == 2:
         def prepare_plots_for_viewer():
             plots_data = []
             for plot in st.session_state.plots:
-                corners = plot.get('corners', {})
-                points = []
-                for corner_label in ['A', 'B', 'C', 'D']:
-                    corner = corners.get(corner_label, {})
-                    if corner:
-                        points.append({'x': corner.get('x', 0), 'y': corner.get('y', 0)})
+                # CRITICAL: Use 'points' array if available (preserves all points), 
+                # otherwise fall back to converting corners (for backward compatibility)
+                if 'points' in plot and plot['points']:
+                    # Use stored points array (preserves all points, not just 4)
+                    points = [{'x': int(p.get('x', 0)), 'y': int(p.get('y', 0))} for p in plot['points']]
+                else:
+                    # Fallback: Convert corners to points (for backward compatibility with old data)
+                    corners = plot.get('corners', {})
+                    points = []
+                    for corner_label in ['A', 'B', 'C', 'D']:
+                        corner = corners.get(corner_label, {})
+                        if corner:
+                            points.append({'x': corner.get('x', 0), 'y': corner.get('y', 0)})
                 
                 plots_data.append({
                     'id': plot.get('plot_id', 'unknown'),
                     'plot_number': plot.get('plot_number', 0),
-                    'points': points
+                    'points': points  # CRITICAL: This now contains ALL points, not just 4
                 })
             return plots_data
         
@@ -2218,12 +2273,18 @@ elif current_step == 2:
                                 points = updated_plot.get('points', [])
                                 
                                 if len(points) >= 3:
+                                    # CRITICAL: Store ALL points, not just first 4
+                                    # Store points array for plots with more than 4 points
+                                    plot['points'] = [{'x': int(p['x']), 'y': int(p['y'])} for p in points]
+                                    
+                                    # Also create corners for backward compatibility (use first 4 points)
                                     corners = {}
                                     corner_labels = ['A', 'B', 'C', 'D']
                                     for i, label in enumerate(corner_labels):
                                         if i < len(points):
                                             corners[label] = {'x': int(points[i]['x']), 'y': int(points[i]['y'])}
                                         else:
+                                            # If less than 4 points, duplicate last point
                                             last_point = points[-1]
                                             corners[label] = {'x': int(last_point['x']), 'y': int(last_point['y'])}
                                     plot['corners'] = corners
@@ -2261,17 +2322,23 @@ elif current_step == 2:
                             points = new_plot_data.get('points', [])
                             
                             if len(points) >= 3:
+                                # CRITICAL: Store ALL points, not just first 4
+                                all_points = [{'x': int(p['x']), 'y': int(p['y'])} for p in points]
+                                
+                                # Also create corners for backward compatibility (use first 4 points)
                                 corners = {}
                                 corner_labels = ['A', 'B', 'C', 'D']
                                 for i, label in enumerate(corner_labels):
                                     if i < len(points):
                                         corners[label] = {'x': int(points[i]['x']), 'y': int(points[i]['y'])}
                                     else:
+                                        # If less than 4 points, duplicate last point
                                         last_point = points[-1]
                                         corners[label] = {'x': int(last_point['x']), 'y': int(last_point['y'])}
                                 
                                 new_plot = {
                                     'plot_id': new_plot_data.get('id', plot_id),
+                                    'points': all_points,  # CRITICAL: Store all points
                                     'plot_number': new_plot_data.get('plot_number', len(st.session_state.plots) + 1),
                                     'corners': corners
                                 }
@@ -2410,48 +2477,79 @@ elif current_step == 2:
 elif current_step == 3:
     if st.session_state.plots:
         st.subheader("Edit Plot Numbers & Coordinates")
-        st.write("Use the table below to correct plot numbers and corner coordinates (A, B, C, D). All columns except Plot ID are editable.")
+        st.write("Use the table below to correct plot numbers and point coordinates. The table dynamically shows all points (A, B, C, D, E, F, ...) based on the maximum number of points across all plots. All columns except Plot ID are editable.")
         
         # Build DataFrame for editable table
+        # CRITICAL: Dynamically determine max points across all plots to show all columns
         sorted_plots = sorted(st.session_state.plots, key=lambda x: (x.get('plot_number') is None, x.get('plot_number') if x.get('plot_number') is not None else 0, x.get('plot_id')))
         
-        plots_df_flat = pd.DataFrame([
-            {
+        # Find maximum number of points across all plots
+        max_points = 0
+        for p in sorted_plots:
+            points = p.get('points', [])
+            if points:
+                max_points = max(max_points, len(points))
+            else:
+                # Fallback: count corners
+                corners = p.get('corners', {})
+                max_points = max(max_points, len(corners))
+        
+        # Generate column labels (A, B, C, D, E, F, ...)
+        corner_labels = ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'I', 'J', 'K', 'L', 'M', 'N', 'O', 'P']
+        point_labels = corner_labels[:max_points] if max_points <= len(corner_labels) else corner_labels + [chr(ord('Q') + i) for i in range(max_points - len(corner_labels))]
+        
+        # Build DataFrame with dynamic columns for all points
+        plots_data = []
+        for p in sorted_plots:
+            row = {
                 "plot_id": p.get('plot_id'),
                 "plot_number": p.get('plot_number'),
-                "A_x": p.get('corners', {}).get('A', {}).get('x'),
-                "A_y": p.get('corners', {}).get('A', {}).get('y'),
-                "B_x": p.get('corners', {}).get('B', {}).get('x'),
-                "B_y": p.get('corners', {}).get('B', {}).get('y'),
-                "C_x": p.get('corners', {}).get('C', {}).get('x'),
-                "C_y": p.get('corners', {}).get('C', {}).get('y'),
-                "D_x": p.get('corners', {}).get('D', {}).get('x'),
-                "D_y": p.get('corners', {}).get('D', {}).get('y'),
             }
-            for p in sorted_plots
-        ])
+            
+            # Get points array if available, otherwise convert corners to points
+            points = p.get('points', [])
+            if not points:
+                # Fallback: Convert corners to points
+                corners = p.get('corners', {})
+                points = []
+                for label in ['A', 'B', 'C', 'D']:
+                    if label in corners:
+                        points.append({'x': corners[label].get('x', 0), 'y': corners[label].get('y', 0)})
+            
+            # Add columns for all points (up to max_points)
+            for i, label in enumerate(point_labels):
+                if i < len(points):
+                    row[f"{label}_x"] = points[i].get('x', 0)
+                    row[f"{label}_y"] = points[i].get('y', 0)
+                else:
+                    row[f"{label}_x"] = None
+                    row[f"{label}_y"] = None
+            
+            plots_data.append(row)
+        
+        plots_df_flat = pd.DataFrame(plots_data)
+        
+        # Build column config dynamically
+        column_config = {
+            "plot_id": st.column_config.TextColumn("Plot ID", disabled=True),
+            "plot_number": st.column_config.NumberColumn("Plot Number", min_value=1, max_value=9999, step=1),
+        }
+        
+        # Add columns for all points
+        for label in point_labels:
+            column_config[f"{label}_x"] = st.column_config.NumberColumn(f"{label} → x", min_value=0, step=1, help=f"Point {label}, x coordinate")
+            column_config[f"{label}_y"] = st.column_config.NumberColumn(f"{label} → y", min_value=0, step=1, help=f"Point {label}, y coordinate")
         
         edited_df = st.data_editor(
             plots_df_flat,
             hide_index=True,
-            column_config={
-                "plot_id": st.column_config.TextColumn("Plot ID", disabled=True),
-                "plot_number": st.column_config.NumberColumn("Plot Number", min_value=1, max_value=9999, step=1),
-                "A_x": st.column_config.NumberColumn("A → x", min_value=0, step=1, help="Corner A, x coordinate"),
-                "A_y": st.column_config.NumberColumn("A → y", min_value=0, step=1, help="Corner A, y coordinate"),
-                "B_x": st.column_config.NumberColumn("B → x", min_value=0, step=1, help="Corner B, x coordinate"),
-                "B_y": st.column_config.NumberColumn("B → y", min_value=0, step=1, help="Corner B, y coordinate"),
-                "C_x": st.column_config.NumberColumn("C → x", min_value=0, step=1, help="Corner C, x coordinate"),
-                "C_y": st.column_config.NumberColumn("C → y", min_value=0, step=1, help="Corner C, y coordinate"),
-                "D_x": st.column_config.NumberColumn("D → x", min_value=0, step=1, help="Corner D, x coordinate"),
-                "D_y": st.column_config.NumberColumn("D → y", min_value=0, step=1, help="Corner D, y coordinate"),
-            },
+            column_config=column_config,
             use_container_width=True,
             num_rows="fixed",
             height=300
         )
         
-        # Use edited_df directly for processing (columns are already A_x, A_y, etc.)
+        # Use edited_df directly for processing
         edited_df_processed = edited_df
         
         # Check for duplicate plot numbers in edited data
@@ -2484,12 +2582,13 @@ elif current_step == 3:
                     plot_id = row['plot_id']
                     # Find original plot to preserve coordinates if needed
                     original_plot = next((p for p in st.session_state.plots if p.get('plot_id') == plot_id), None)
+                    original_points = original_plot.get('points', []) if original_plot else []
                     original_corners = original_plot.get('corners', {}) if original_plot else {}
                     
                     # Update plot number
                     plot_number = int(row['plot_number']) if pd.notna(row['plot_number']) else None
                     
-                    # Update corners, preserving original if new value is invalid/NaN
+                    # Update points, preserving original if new value is invalid/NaN
                     def get_coord(row, coord_key, original_value):
                         """Get coordinate value, using original if new value is invalid."""
                         if coord_key in row and pd.notna(row[coord_key]):
@@ -2499,18 +2598,49 @@ elif current_step == 3:
                                 return original_value
                         return original_value
                     
+                    # CRITICAL: Collect all points from the grid (A, B, C, D, E, F, ...)
+                    points = []
                     corners = {}
-                    for corner in ['A', 'B', 'C', 'D']:
-                        orig_x = original_corners.get(corner, {}).get('x', 0)
-                        orig_y = original_corners.get(corner, {}).get('y', 0)
-                        corners[corner] = {
-                            'x': get_coord(row, f'{corner}_x', orig_x),
-                            'y': get_coord(row, f'{corner}_y', orig_y)
-                        }
+                    
+                    for label in point_labels:
+                        x_key = f'{label}_x'
+                        y_key = f'{label}_y'
+                        
+                        # Get coordinates from grid, or use original if not available
+                        if x_key in row and y_key in row:
+                            x_val = get_coord(row, x_key, None)
+                            y_val = get_coord(row, y_key, None)
+                            
+                            if x_val is not None and y_val is not None:
+                                points.append({'x': x_val, 'y': y_val})
+                                
+                                # Also update corners for backward compatibility (first 4 points)
+                                if label in ['A', 'B', 'C', 'D']:
+                                    corners[label] = {'x': x_val, 'y': y_val}
+                    
+                    # If no points from grid, fall back to original
+                    if not points:
+                        if original_points:
+                            points = original_points.copy()
+                        else:
+                            # Convert corners to points
+                            for label in ['A', 'B', 'C', 'D']:
+                                if label in original_corners:
+                                    points.append({
+                                        'x': original_corners[label].get('x', 0),
+                                        'y': original_corners[label].get('y', 0)
+                                    })
+                                    corners[label] = original_corners[label]
+                    
+                    # Ensure we have at least 3 points
+                    if len(points) < 3:
+                        st.warning(f"⚠️ Plot {plot_id} has less than 3 points. Skipping update.")
+                        continue
                     
                     plot_updates[plot_id] = {
                         'plot_number': plot_number,
-                        'corners': corners
+                        'points': points,  # CRITICAL: Store all points
+                        'corners': corners  # Also store corners for backward compatibility
                     }
                 
                 # Apply updates
@@ -2518,7 +2648,8 @@ elif current_step == 3:
                     if p.get('plot_id') in plot_updates:
                         update = plot_updates[p['plot_id']]
                         p['plot_number'] = update['plot_number']
-                        p['corners'] = update['corners']
+                        p['points'] = update['points']  # CRITICAL: Store all points
+                        p['corners'] = update['corners']  # Also update corners
                 
                 # Regenerate detection image with updated coordinates
                 if st.session_state.detection_image is not None:
@@ -2527,27 +2658,37 @@ elif current_step == 3:
                     display_img = original_img.copy()
                     
                     for plot in st.session_state.plots:
-                        corners = plot.get('corners', {})
-                        if not corners:
+                        # CRITICAL: Use 'points' array if available (supports more than 4 points)
+                        points = plot.get('points', [])
+                        if not points:
+                            # Fallback: Convert corners to points
+                            corners = plot.get('corners', {})
+                            if not corners:
+                                continue
+                            corner_labels = ['A', 'B', 'C', 'D']
+                            points = []
+                            for label in corner_labels:
+                                if label in corners:
+                                    points.append({'x': corners[label].get('x', 0), 'y': corners[label].get('y', 0)})
+                        
+                        if len(points) < 3:
                             continue
+                        
+                        # Create points array with all points (not just 4)
                         pts = np.array([
-                            [corners['A']['x'], corners['A']['y']],
-                            [corners['B']['x'], corners['B']['y']],
-                            [corners['C']['x'], corners['C']['y']],
-                            [corners['D']['x'], corners['D']['y']]
+                            [int(p['x']), int(p['y'])] for p in points
                         ], np.int32)
+                        
                         # Red lines for plot boundaries
                         cv2.polylines(display_img, [pts], True, (0, 0, 255), 2)
                         
-                        # Draw red dots at each corner
-                        cv2.circle(display_img, (corners['A']['x'], corners['A']['y']), 4, (0, 0, 255), -1)
-                        cv2.circle(display_img, (corners['B']['x'], corners['B']['y']), 4, (0, 0, 255), -1)
-                        cv2.circle(display_img, (corners['C']['x'], corners['C']['y']), 4, (0, 0, 255), -1)
-                        cv2.circle(display_img, (corners['D']['x'], corners['D']['y']), 4, (0, 0, 255), -1)
+                        # Draw red dots at each point (all points, not just 4)
+                        for point in points:
+                            cv2.circle(display_img, (int(point['x']), int(point['y'])), 4, (0, 0, 255), -1)
                         
-                        # Draw plot number
-                        cx = sum([corners[c]['x'] for c in corners]) // 4
-                        cy = sum([corners[c]['y'] for c in corners]) // 4
+                        # Draw plot number - calculate center from all points
+                        cx = sum([int(p['x']) for p in points]) // len(points)
+                        cy = sum([int(p['y']) for p in points]) // len(points)
                         cv2.putText(display_img, str(plot['plot_number']),
                                    (cx-10, cy+5), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 0), 2)
                     
@@ -2602,10 +2743,9 @@ elif current_step == 5:
         else:
             st.warning("⚠️ Uploaded image not found. Please upload an image in Step 1 first.")
         
-        # Use detected overlay to show plot boundaries on top of the original image
-        plot_overlay_url = st.session_state.get('detected_overlay_url', "")
-        if not plot_overlay_url:
-            st.warning("⚠️ No detected overlay available. Please run detection in Step 1 first.")
+        # CRITICAL: Do NOT use detected overlay in brochure preview - only show background image
+        # The brochure viewer will draw colored plot polygons directly, not from an overlay image
+        # plot_overlay_url = None  # Explicitly set to None to show only background
         
         # Plot Status Controls - visible note only
         st.markdown(
@@ -2622,13 +2762,17 @@ elif current_step == 5:
         
         # Build plot payload with current statuses
         def build_plot_payload(plot):
-            corners = plot.get('corners', {})
-            ordered_labels = ['A', 'B', 'C', 'D']
-            points = []
-            for label in ordered_labels:
-                corner = corners.get(label, {})
-                if corner:
-                    points.append({'x': corner.get('x', 0), 'y': corner.get('y', 0)})
+            # CRITICAL: Use 'points' array if available (supports more than 4 points)
+            points = plot.get('points', [])
+            if not points:
+                # Fallback: Convert corners to points for backward compatibility
+                corners = plot.get('corners', {})
+                ordered_labels = ['A', 'B', 'C', 'D']
+                points = []
+                for label in ordered_labels:
+                    corner = corners.get(label, {})
+                    if corner:
+                        points.append({'x': corner.get('x', 0), 'y': corner.get('y', 0)})
             geo_lat = None
             geo_lon = None
             geo_plot = next((gp for gp in st.session_state.geo_plots if gp.get('plot_id') == plot.get('plot_id')), None) if st.session_state.geo_plots else None
@@ -2681,11 +2825,12 @@ elif current_step == 5:
         plots_payload = [build_plot_payload(plot) for plot in st.session_state.plots if has_valid_corners(plot)]
         
         # Auto-render interactive Fabric Canvas
+        # CRITICAL: Pass None for plot_overlay_url to show only background image (no Step 4 polygon overlay)
         if background_image_url and plots_payload:
             brochure_viewer(
                 background_image_url=background_image_url,
                 plots=plots_payload,
-                plot_overlay_url=plot_overlay_url if plot_overlay_url else None
+                plot_overlay_url=None  # Explicitly None - only show background, not Step 4 overlay
             )
             
             # Initialize status updates storage
@@ -3416,22 +3561,32 @@ elif current_step == 4:
             min_x, min_y, max_x, max_y = None, None, None, None
             
             # First pass: calculate bounding box from all valid plots
+            # CRITICAL: Use 'points' array if available (supports more than 4 points), 
+            # otherwise fall back to corners (for backward compatibility)
             valid_plots = []
             for plot in st.session_state.plots:
-                corners = plot.get('corners', {})
-                if not corners:
-                    continue
+                # Get points array if available, otherwise convert corners to points
+                points = plot.get('points', [])
+                if not points:
+                    # Fallback: Convert corners to points for backward compatibility
+                    corners = plot.get('corners', {})
+                    if not corners:
+                        continue
+                    # Convert corners to points array
+                    corner_labels = ['A', 'B', 'C', 'D']
+                    points = []
+                    for label in corner_labels:
+                        if label in corners:
+                            points.append({'x': corners[label].get('x', 0), 'y': corners[label].get('y', 0)})
                 
-                # Validate that all corners exist and have valid coordinates
-                required_corners = ['A', 'B', 'C', 'D']
-                if not all(corner in corners for corner in required_corners):
+                if len(points) < 3:
                     continue
                 
                 # Validate coordinates are numbers
                 try:
-                    # Get all corner coordinates
-                    x_coords = [int(corners[c]['x']) for c in required_corners]
-                    y_coords = [int(corners[c]['y']) for c in required_corners]
+                    # Get all point coordinates
+                    x_coords = [int(p['x']) for p in points]
+                    y_coords = [int(p['y']) for p in points]
                     
                     # Update bounding box
                     plot_min_x, plot_max_x = min(x_coords), max(x_coords)
@@ -3454,19 +3609,28 @@ elif current_step == 4:
             # Calculate canvas size with padding to fit all plots
             padding = 50  # Padding around all plots
             if min_x is not None and max_x is not None:
-                # Use bounding box of plots, but ensure it's at least as large as original image
-                canvas_width = max(max_x - min_x + 2 * padding, orig_width)
-                canvas_height = max(max_y - min_y + 2 * padding, orig_height)
+                # Calculate the bounding box dimensions
+                plot_width = max_x - min_x
+                plot_height = max_y - min_y
                 
-                # Calculate offset to center content (if plots extend beyond original image)
-                offset_x = min(0, min_x - padding)  # Negative if plots extend left
-                offset_y = min(0, min_y - padding)  # Negative if plots extend up
+                # Calculate required canvas size: bounding box + padding on all sides
+                # If min_x/min_y are negative, plots extend left/up, so we need extra space
+                required_width = plot_width + 2 * padding
+                required_height = plot_height + 2 * padding
                 
-                # Adjust canvas size if plots extend beyond original bounds
-                if offset_x < 0:
-                    canvas_width += abs(offset_x)
-                if offset_y < 0:
-                    canvas_height += abs(offset_y)
+                # Calculate offset to shift all plots so the leftmost/topmost point
+                # (after accounting for negative coordinates) appears at position (padding, padding)
+                # If min_x is negative (e.g., -100), we shift right by padding - min_x (e.g., 50 - (-100) = 150)
+                # If min_x is positive (e.g., 100), we shift left by min_x - padding (e.g., 100 - 50 = 50)
+                # But we always want plots to start at padding, so we use: padding - min_x
+                final_offset_x = padding - min_x  # Shift so leftmost plot is at x=padding
+                final_offset_y = padding - min_y  # Shift so topmost plot is at y=padding
+                
+                # Calculate canvas dimensions to fit all shifted plots
+                # After shifting, the rightmost plot will be at: max_x + final_offset_x
+                # The bottommost plot will be at: max_y + final_offset_y
+                canvas_width = int(max_x + final_offset_x + padding)
+                canvas_height = int(max_y + final_offset_y + padding)
                 
                 # Ensure canvas is at least as large as original image
                 canvas_width = max(canvas_width, orig_width)
@@ -3475,8 +3639,8 @@ elif current_step == 4:
                 # No valid plots, use original dimensions
                 canvas_width = orig_width
                 canvas_height = orig_height
-                offset_x = 0
-                offset_y = 0
+                final_offset_x = 0
+                final_offset_y = 0
             
             # Create white background with calculated dimensions
             display_img = np.ones((canvas_height, canvas_width, 3), dtype=np.uint8) * 255
@@ -3487,17 +3651,30 @@ elif current_step == 4:
             #     display_img[offset_y:offset_y+orig_height, offset_x:offset_x+orig_width] = original_img
             
             # Redraw all plots with current coordinates and updated plot numbers
+            # CRITICAL: Use 'points' array if available (supports more than 4 points)
             for plot in valid_plots:
-                corners = plot.get('corners', {})
-                required_corners = ['A', 'B', 'C', 'D']
+                # Get points array if available, otherwise convert corners to points
+                points = plot.get('points', [])
+                if not points:
+                    # Fallback: Convert corners to points for backward compatibility
+                    corners = plot.get('corners', {})
+                    if not corners:
+                        continue
+                    corner_labels = ['A', 'B', 'C', 'D']
+                    points = []
+                    for label in corner_labels:
+                        if label in corners:
+                            points.append({'x': corners[label].get('x', 0), 'y': corners[label].get('y', 0)})
+                
+                if len(points) < 3:
+                    continue
                 
                 # Adjust coordinates by offset to fit in canvas
                 try:
+                    # Create points array with all points (not just 4)
                     pts = np.array([
-                        [int(corners['A']['x']) - offset_x, int(corners['A']['y']) - offset_y],
-                        [int(corners['B']['x']) - offset_x, int(corners['B']['y']) - offset_y],
-                        [int(corners['C']['x']) - offset_x, int(corners['C']['y']) - offset_y],
-                        [int(corners['D']['x']) - offset_x, int(corners['D']['y']) - offset_y]
+                        [int(p['x']) + final_offset_x, int(p['y']) + final_offset_y] 
+                        for p in points
                     ], np.int32)
                 except (KeyError, ValueError, TypeError):
                     continue
@@ -3505,17 +3682,18 @@ elif current_step == 4:
                 # Red lines for plot boundaries (BGR format: red = (0, 0, 255))
                 cv2.polylines(display_img, [pts], True, (0, 0, 255), 2)
                 
-                # Draw red dots at each corner
-                cv2.circle(display_img, (int(corners['A']['x']) - offset_x, int(corners['A']['y']) - offset_y), 4, (0, 0, 255), -1)
-                cv2.circle(display_img, (int(corners['B']['x']) - offset_x, int(corners['B']['y']) - offset_y), 4, (0, 0, 255), -1)
-                cv2.circle(display_img, (int(corners['C']['x']) - offset_x, int(corners['C']['y']) - offset_y), 4, (0, 0, 255), -1)
-                cv2.circle(display_img, (int(corners['D']['x']) - offset_x, int(corners['D']['y']) - offset_y), 4, (0, 0, 255), -1)
+                # Draw red dots at each point (all points, not just 4)
+                for point in points:
+                    cv2.circle(display_img, 
+                              (int(point['x']) + final_offset_x, int(point['y']) + final_offset_y), 
+                              4, (0, 0, 255), -1)
                 
                 # Draw plot number in black - use current plot number from session state
                 plot_number = plot.get('plot_number')
                 if plot_number is not None:
-                    cx = sum([int(corners[c]['x']) - offset_x for c in corners]) // 4
-                    cy = sum([int(corners[c]['y']) - offset_y for c in corners]) // 4
+                    # Calculate center from all points
+                    cx = sum([int(p['x']) + final_offset_x for p in points]) // len(points)
+                    cy = sum([int(p['y']) + final_offset_y for p in points]) // len(points)
                     cv2.putText(display_img, str(plot_number),
                                (cx-10, cy+5), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 0), 2)
             
@@ -3568,66 +3746,104 @@ elif current_step == 7:
             sorted_plots = sorted(st.session_state.plots, 
                                  key=lambda p: p['plot_number'] if p['plot_number'] is not None else 9999)
             
-            # Create a mapping of plot_number to pixel coordinates
-            plot_coords_map = {p.get('plot_number'): p.get('corners', {}) for p in sorted_plots}
+            # CRITICAL: Create a mapping of plot_number to pixel coordinates
+            # Use 'points' array if available (supports more than 4 points), otherwise use corners
+            plot_coords_map = {}
+            for p in sorted_plots:
+                plot_num = p.get('plot_number')
+                # Get points array if available, otherwise convert corners to points
+                points = p.get('points', [])
+                if not points:
+                    corners = p.get('corners', {})
+                    points = []
+                    for label in ['A', 'B', 'C', 'D']:
+                        if label in corners:
+                            points.append({'x': corners[label].get('x', 0), 'y': corners[label].get('y', 0)})
+                plot_coords_map[plot_num] = points
+            
+            # Find maximum number of points across all plots to determine table columns
+            max_points = 0
+            for plot_num, points in plot_coords_map.items():
+                max_points = max(max_points, len(points))
+            # Also check geo_plots for lat/lon points
+            for plot in sorted_geo_plots:
+                corners = plot.get('corners', {})
+                max_points = max(max_points, len(corners))
+            
+            # Generate column labels (A, B, C, D, E, F, ...)
+            corner_labels = ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'I', 'J', 'K', 'L', 'M', 'N', 'O', 'P']
+            point_labels = corner_labels[:max_points] if max_points <= len(corner_labels) else corner_labels + [chr(ord('Q') + i) for i in range(max_points - len(corner_labels))]
             
             table_data = []
             for idx, plot in enumerate(sorted_geo_plots):
                 plot_num = plot['plot_number']
                 plot_id = f"P-{plot_num:02d}" if plot_num else "Unknown"
-                pixel_corners = plot_coords_map.get(plot_num, {})
+                pixel_points = plot_coords_map.get(plot_num, [])
+                geo_corners = plot.get('corners', {})
                 
-                # First row: Coordinates (X,Y)
-                table_data.append({
+                # First row: Coordinates (X,Y) - build dynamically for all points
+                coord_row = {
                     "Sl. No": idx + 1,
                     "Plot No.": plot_id,
                     "Value": "Coordinates",
-                    "Side A (X,Y)": f"({pixel_corners.get('A', {}).get('x', 0)}, {pixel_corners.get('A', {}).get('y', 0)})" if pixel_corners.get('A') else "-",
-                    "Side B (X,Y)": f"({pixel_corners.get('B', {}).get('x', 0)}, {pixel_corners.get('B', {}).get('y', 0)})" if pixel_corners.get('B') else "-",
-                    "Side C (X,Y)": f"({pixel_corners.get('C', {}).get('x', 0)}, {pixel_corners.get('C', {}).get('y', 0)})" if pixel_corners.get('C') else "-",
-                    "Side D (X,Y)": f"({pixel_corners.get('D', {}).get('x', 0)}, {pixel_corners.get('D', {}).get('y', 0)})" if pixel_corners.get('D') else "-",
-                    "Side E (X,Y)": "-",  # Most plots don't have Side E
-                })
+                }
+                for label in point_labels:
+                    label_idx = ord(label) - ord('A')
+                    if label_idx < len(pixel_points):
+                        coord_row[f"Side {label} (X,Y)"] = f"({pixel_points[label_idx].get('x', 0)}, {pixel_points[label_idx].get('y', 0)})"
+                    else:
+                        coord_row[f"Side {label} (X,Y)"] = "-"
+                table_data.append(coord_row)
                 
-                # Second row: Lat Long
-                table_data.append({
+                # Second row: Lat Long - build dynamically for all points
+                latlon_row = {
                     "Sl. No": "",
                     "Plot No.": plot_id,
                     "Value": "Lat Long",
-                    "Side A (X,Y)": f"({plot['corners']['A']['lat']:.6f}, {plot['corners']['A']['lon']:.6f})",
-                    "Side B (X,Y)": f"({plot['corners']['B']['lat']:.6f}, {plot['corners']['B']['lon']:.6f})",
-                    "Side C (X,Y)": f"({plot['corners']['C']['lat']:.6f}, {plot['corners']['C']['lon']:.6f})",
-                    "Side D (X,Y)": f"({plot['corners']['D']['lat']:.6f}, {plot['corners']['D']['lon']:.6f})",
-                    "Side E (X,Y)": "-",
-                })
+                }
+                for label in point_labels:
+                    if label in geo_corners:
+                        lat = geo_corners[label].get('lat', 0)
+                        lon = geo_corners[label].get('lon', 0)
+                        latlon_row[f"Side {label} (X,Y)"] = f"({lat:.6f}, {lon:.6f})"
+                    else:
+                        latlon_row[f"Side {label} (X,Y)"] = "-"
+                table_data.append(latlon_row)
             
             # Create editable DataFrame with separate columns for lat/lon
+            # CRITICAL: Dynamically build columns for all points (A, B, C, D, E, F, ...)
             editable_data = []
             for idx, plot in enumerate(sorted_geo_plots):
                 plot_num = plot['plot_number']
                 plot_id = f"P-{plot_num:02d}" if plot_num else "Unknown"
-                pixel_corners = plot_coords_map.get(plot_num, {})
+                pixel_points = plot_coords_map.get(plot_num, [])
+                geo_corners = plot.get('corners', {})
                 
-                editable_data.append({
+                row = {
                     "Sl. No": idx + 1,
                     "Plot No.": plot_id,
-                    "A_x": pixel_corners.get('A', {}).get('x', 0) if pixel_corners.get('A') else 0,
-                    "A_y": pixel_corners.get('A', {}).get('y', 0) if pixel_corners.get('A') else 0,
-                    "A_lat": plot['corners']['A']['lat'],
-                    "A_lon": plot['corners']['A']['lon'],
-                    "B_x": pixel_corners.get('B', {}).get('x', 0) if pixel_corners.get('B') else 0,
-                    "B_y": pixel_corners.get('B', {}).get('y', 0) if pixel_corners.get('B') else 0,
-                    "B_lat": plot['corners']['B']['lat'],
-                    "B_lon": plot['corners']['B']['lon'],
-                    "C_x": pixel_corners.get('C', {}).get('x', 0) if pixel_corners.get('C') else 0,
-                    "C_y": pixel_corners.get('C', {}).get('y', 0) if pixel_corners.get('C') else 0,
-                    "C_lat": plot['corners']['C']['lat'],
-                    "C_lon": plot['corners']['C']['lon'],
-                    "D_x": pixel_corners.get('D', {}).get('x', 0) if pixel_corners.get('D') else 0,
-                    "D_y": pixel_corners.get('D', {}).get('y', 0) if pixel_corners.get('D') else 0,
-                    "D_lat": plot['corners']['D']['lat'],
-                    "D_lon": plot['corners']['D']['lon'],
-                })
+                }
+                
+                # Add columns for all points dynamically
+                for label in point_labels:
+                    label_idx = ord(label) - ord('A')
+                    # Pixel coordinates
+                    if label_idx < len(pixel_points):
+                        row[f"{label}_x"] = pixel_points[label_idx].get('x', 0)
+                        row[f"{label}_y"] = pixel_points[label_idx].get('y', 0)
+                    else:
+                        row[f"{label}_x"] = 0
+                        row[f"{label}_y"] = 0
+                    
+                    # Lat/Lon coordinates
+                    if label in geo_corners:
+                        row[f"{label}_lat"] = geo_corners[label].get('lat', 0.0)
+                        row[f"{label}_lon"] = geo_corners[label].get('lon', 0.0)
+                    else:
+                        row[f"{label}_lat"] = 0.0
+                        row[f"{label}_lon"] = 0.0
+                
+                editable_data.append(row)
             
             editable_df = pd.DataFrame(editable_data)
             
@@ -3641,31 +3857,25 @@ elif current_step == 7:
                 st.session_state.original_geo_plots_for_edit = copy.deepcopy(st.session_state.geo_plots)
                 st.session_state.geo_plots_snapshot_saved = True
             
+            # Build column config dynamically for all points
+            column_config = {
+                "Sl. No": st.column_config.NumberColumn("Sl. No", disabled=True),
+                "Plot No.": st.column_config.TextColumn("Plot No.", disabled=True),
+            }
+            
+            # Add columns for all points
+            for label in point_labels:
+                column_config[f"{label}_x"] = st.column_config.NumberColumn(f"{label} → x", min_value=0, step=1, help=f"Point {label}, x coordinate")
+                column_config[f"{label}_y"] = st.column_config.NumberColumn(f"{label} → y", min_value=0, step=1, help=f"Point {label}, y coordinate")
+                column_config[f"{label}_lat"] = st.column_config.NumberColumn(f"{label} → lat", min_value=-90.0, max_value=90.0, step=0.000001, format="%.6f", help=f"Point {label}, latitude")
+                column_config[f"{label}_lon"] = st.column_config.NumberColumn(f"{label} → lon", min_value=-180.0, max_value=180.0, step=0.000001, format="%.6f", help=f"Point {label}, longitude")
+            
             # Display editable table
             edited_df = st.data_editor(
                 editable_df,
                 hide_index=True,
                 key=f"latlon_editor_{st.session_state.latlon_grid_refresh}",
-                column_config={
-                    "Sl. No": st.column_config.NumberColumn("Sl. No", disabled=True),
-                    "Plot No.": st.column_config.TextColumn("Plot No.", disabled=True),
-                    "A_x": st.column_config.NumberColumn("A → x", min_value=0, step=1, help="Corner A, x coordinate"),
-                    "A_y": st.column_config.NumberColumn("A → y", min_value=0, step=1, help="Corner A, y coordinate"),
-                    "A_lat": st.column_config.NumberColumn("A → lat", min_value=-90.0, max_value=90.0, step=0.000001, format="%.6f", help="Corner A, latitude"),
-                    "A_lon": st.column_config.NumberColumn("A → lon", min_value=-180.0, max_value=180.0, step=0.000001, format="%.6f", help="Corner A, longitude"),
-                    "B_x": st.column_config.NumberColumn("B → x", min_value=0, step=1, help="Corner B, x coordinate"),
-                    "B_y": st.column_config.NumberColumn("B → y", min_value=0, step=1, help="Corner B, y coordinate"),
-                    "B_lat": st.column_config.NumberColumn("B → lat", min_value=-90.0, max_value=90.0, step=0.000001, format="%.6f", help="Corner B, latitude"),
-                    "B_lon": st.column_config.NumberColumn("B → lon", min_value=-180.0, max_value=180.0, step=0.000001, format="%.6f", help="Corner B, longitude"),
-                    "C_x": st.column_config.NumberColumn("C → x", min_value=0, step=1, help="Corner C, x coordinate"),
-                    "C_y": st.column_config.NumberColumn("C → y", min_value=0, step=1, help="Corner C, y coordinate"),
-                    "C_lat": st.column_config.NumberColumn("C → lat", min_value=-90.0, max_value=90.0, step=0.000001, format="%.6f", help="Corner C, latitude"),
-                    "C_lon": st.column_config.NumberColumn("C → lon", min_value=-180.0, max_value=180.0, step=0.000001, format="%.6f", help="Corner C, longitude"),
-                    "D_x": st.column_config.NumberColumn("D → x", min_value=0, step=1, help="Corner D, x coordinate"),
-                    "D_y": st.column_config.NumberColumn("D → y", min_value=0, step=1, help="Corner D, y coordinate"),
-                    "D_lat": st.column_config.NumberColumn("D → lat", min_value=-90.0, max_value=90.0, step=0.000001, format="%.6f", help="Corner D, latitude"),
-                    "D_lon": st.column_config.NumberColumn("D → lon", min_value=-180.0, max_value=180.0, step=0.000001, format="%.6f", help="Corner D, longitude"),
-                },
+                column_config=column_config,
                 use_container_width=True,
                 num_rows="fixed"
             )
@@ -3694,24 +3904,33 @@ elif current_step == 7:
                         plot_changed = False
                         plot_offsets = {}
                         
-                        for corner in ['A', 'B', 'C', 'D']:
-                            new_lat = float(row[f'{corner}_lat'])
-                            new_lon = float(row[f'{corner}_lon'])
+                        # CRITICAL: Check all points dynamically (A, B, C, D, E, F, ...)
+                        for corner in point_labels:
+                            # Check if this corner exists in the original geo_plot
+                            if corner not in original_geo_plot.get('corners', {}):
+                                continue
                             
-                            orig_lat = original_geo_plot['corners'][corner]['lat']
-                            orig_lon = original_geo_plot['corners'][corner]['lon']
-                            
-                            # Calculate offset
-                            delta_lat = new_lat - orig_lat
-                            delta_lon = new_lon - orig_lon
-                            
-                            # Check if this corner changed significantly
-                            if abs(delta_lat) > 0.0000001 or abs(delta_lon) > 0.0000001:
-                                plot_changed = True
-                                plot_offsets[corner] = {
-                                    'delta_lat': delta_lat,
-                                    'delta_lon': delta_lon
-                                }
+                            try:
+                                new_lat = float(row[f'{corner}_lat'])
+                                new_lon = float(row[f'{corner}_lon'])
+                                
+                                orig_lat = original_geo_plot['corners'][corner]['lat']
+                                orig_lon = original_geo_plot['corners'][corner]['lon']
+                                
+                                # Calculate offset
+                                delta_lat = new_lat - orig_lat
+                                delta_lon = new_lon - orig_lon
+                                
+                                # Check if this corner changed significantly
+                                if abs(delta_lat) > 0.0000001 or abs(delta_lon) > 0.0000001:
+                                    plot_changed = True
+                                    plot_offsets[corner] = {
+                                        'delta_lat': delta_lat,
+                                        'delta_lon': delta_lon
+                                    }
+                            except (KeyError, ValueError, TypeError):
+                                # Skip if this corner doesn't exist in the row
+                                continue
                         
                         if plot_changed:
                             changed_plots.append({
@@ -3755,56 +3974,75 @@ elif current_step == 7:
                                     # Get the edited values for this plot
                                     edited_row = edited_df.iloc[plot_idx]
                                     
-                                    # Apply offset to each corner
-                                    for corner in ['A', 'B', 'C', 'D']:
-                                        # Get the edited value (which may already include changes)
-                                        edited_lat = float(edited_row[f'{corner}_lat'])
-                                        edited_lon = float(edited_row[f'{corner}_lon'])
+                                    # CRITICAL: Apply offset to all points dynamically (A, B, C, D, E, F, ...)
+                                    for corner in point_labels:
+                                        # Check if this corner exists in the geo_plot
+                                        if corner not in geo_plot.get('corners', {}):
+                                            continue
                                         
-                                        # Get original value
-                                        original_plot = next((gp for gp in original_geo_plots if gp['plot_number'] == plot_num), None)
-                                        
-                                        if original_plot:
-                                            orig_lat = original_plot['corners'][corner]['lat']
-                                            orig_lon = original_plot['corners'][corner]['lon']
+                                        try:
+                                            # Get the edited value (which may already include changes)
+                                            edited_lat = float(edited_row[f'{corner}_lat'])
+                                            edited_lon = float(edited_row[f'{corner}_lon'])
                                             
-                                            # Apply the reference offset to the original values
-                                            new_lat = orig_lat + avg_delta_lat
-                                            new_lon = orig_lon + avg_delta_lon
+                                            # Get original value
+                                            original_plot = next((gp for gp in original_geo_plots if gp['plot_number'] == plot_num), None)
                                             
-                                            # Update geo_plot
-                                            geo_plot['corners'][corner]['lat'] = new_lat
-                                            geo_plot['corners'][corner]['lon'] = new_lon
-                                            
-                                            # Also update pixel coordinates if reference settings are available
-                                            has_ref_settings = ('px_to_ft' in st.session_state and 
-                                                              'ref_plot_id' in st.session_state and
-                                                              st.session_state.ref_plot_id)
-                                            
-                                            if has_ref_settings:
-                                                ref_plot = next((p for p in st.session_state.plots if p.get('plot_id') == st.session_state.ref_plot_id), None)
-                                                ref_geo_plot = next((gp for gp in st.session_state.geo_plots if gp.get('plot_id') == st.session_state.ref_plot_id), None)
+                                            if original_plot and corner in original_plot.get('corners', {}):
+                                                orig_lat = original_plot['corners'][corner]['lat']
+                                                orig_lon = original_plot['corners'][corner]['lon']
                                                 
-                                                if ref_plot and ref_geo_plot:
-                                                    ref_corner = st.session_state.get('ref_corner', 'A')
-                                                    ref_pixel_corner = ref_plot['corners'].get(ref_corner, {})
-                                                    ref_x = ref_pixel_corner.get('x')
-                                                    ref_y = ref_pixel_corner.get('y')
-                                                    ref_geo_corner = ref_geo_plot['corners'].get(ref_corner, {})
-                                                    ref_lat = ref_geo_corner.get('lat')
-                                                    ref_lon = ref_geo_corner.get('lon')
+                                                # Apply the reference offset to the original values
+                                                new_lat = orig_lat + avg_delta_lat
+                                                new_lon = orig_lon + avg_delta_lon
+                                                
+                                                # Update geo_plot
+                                                geo_plot['corners'][corner]['lat'] = new_lat
+                                                geo_plot['corners'][corner]['lon'] = new_lon
+                                                
+                                                # Also update pixel coordinates if reference settings are available
+                                                has_ref_settings = ('px_to_ft' in st.session_state and 
+                                                                  'ref_plot_id' in st.session_state and
+                                                                  st.session_state.ref_plot_id)
+                                                
+                                                if has_ref_settings:
+                                                    ref_plot = next((p for p in st.session_state.plots if p.get('plot_id') == st.session_state.ref_plot_id), None)
+                                                    ref_geo_plot = next((gp for gp in st.session_state.geo_plots if gp.get('plot_id') == st.session_state.ref_plot_id), None)
                                                     
-                                                    if all(v is not None for v in [ref_lat, ref_lon, ref_x, ref_y]):
-                                                        px_to_ft = st.session_state.px_to_ft
+                                                    if ref_plot and ref_geo_plot:
+                                                        ref_corner = st.session_state.get('ref_corner', 'A')
+                                                        ref_pixel_corner = ref_plot['corners'].get(ref_corner, {})
+                                                        ref_x = ref_pixel_corner.get('x')
+                                                        ref_y = ref_pixel_corner.get('y')
+                                                        ref_geo_corner = ref_geo_plot['corners'].get(ref_corner, {})
+                                                        ref_lat = ref_geo_corner.get('lat')
+                                                        ref_lon = ref_geo_corner.get('lon')
                                                         
-                                                        # Find pixel plot and update pixel coordinates
-                                                        pixel_plot = next((p for p in st.session_state.plots if p.get('plot_number') == plot_num), None)
-                                                        if pixel_plot:
-                                                            calculated_x, calculated_y = recalculate_pixel_from_coordinates(
-                                                                ref_lat, ref_lon, ref_x, ref_y, new_lat, new_lon, px_to_ft
-                                                            )
-                                                            pixel_plot['corners'][corner]['x'] = calculated_x
-                                                            pixel_plot['corners'][corner]['y'] = calculated_y
+                                                        if all(v is not None for v in [ref_lat, ref_lon, ref_x, ref_y]):
+                                                            px_to_ft = st.session_state.px_to_ft
+                                                            
+                                                            # Find pixel plot and update pixel coordinates
+                                                            pixel_plot = next((p for p in st.session_state.plots if p.get('plot_number') == plot_num), None)
+                                                            if pixel_plot:
+                                                                # CRITICAL: Update points array if available, otherwise update corners
+                                                                calculated_x, calculated_y = recalculate_pixel_from_coordinates(
+                                                                    ref_lat, ref_lon, ref_x, ref_y, new_lat, new_lon, px_to_ft
+                                                                )
+                                                                
+                                                                # Update in corners (for backward compatibility)
+                                                                if 'corners' in pixel_plot and corner in pixel_plot['corners']:
+                                                                    pixel_plot['corners'][corner]['x'] = calculated_x
+                                                                    pixel_plot['corners'][corner]['y'] = calculated_y
+                                                                
+                                                                # Also update in points array if it exists
+                                                                if 'points' in pixel_plot:
+                                                                    corner_idx = ord(corner) - ord('A')
+                                                                    if corner_idx < len(pixel_plot['points']):
+                                                                        pixel_plot['points'][corner_idx]['x'] = calculated_x
+                                                                        pixel_plot['points'][corner_idx]['y'] = calculated_y
+                                        except (KeyError, ValueError, TypeError):
+                                            # Skip if this corner doesn't exist
+                                            continue
                             
                             changes_made = True
                             updated_count = len(st.session_state.geo_plots)
@@ -3939,16 +4177,17 @@ elif current_step == 8:
                             # Find matching plot in session state
                             for geo_plot in st.session_state.geo_plots:
                                 if geo_plot.get('plot_id') == plot_id:
-                                    # Update corners
-                                    for corner in ['A', 'B', 'C', 'D']:
-                                        if corner in updated_plot.get('corners', {}):
-                                            old_lat = geo_plot['corners'][corner].get('lat')
-                                            old_lon = geo_plot['corners'][corner].get('lon')
-                                            new_lat = updated_plot['corners'][corner]['lat']
-                                            new_lon = updated_plot['corners'][corner]['lon']
+                                    # CRITICAL: Update ALL corners (A, B, C, D, E, F, ...) not just first 4
+                                    updated_corners = updated_plot.get('corners', {})
+                                    for corner_label, corner_data in updated_corners.items():
+                                        if corner_label in geo_plot.get('corners', {}):
+                                            old_lat = geo_plot['corners'][corner_label].get('lat')
+                                            old_lon = geo_plot['corners'][corner_label].get('lon')
+                                            new_lat = corner_data.get('lat')
+                                            new_lon = corner_data.get('lon')
                                             
-                                            geo_plot['corners'][corner]['lat'] = new_lat
-                                            geo_plot['corners'][corner]['lon'] = new_lon
+                                            geo_plot['corners'][corner_label]['lat'] = new_lat
+                                            geo_plot['corners'][corner_label]['lon'] = new_lon
                                             
                                             if abs(old_lat - new_lat) > 0.000001 or abs(old_lon - new_lon) > 0.000001:
                                                 updated_count += 1
@@ -4086,14 +4325,17 @@ elif current_step == 8:
                     st.rerun()
             
             # Collect all valid coordinates from ALL plots for proper map bounds
+            # CRITICAL: Collect ALL corners (A, B, C, D, E, F, ...) not just first 4
             all_lats = []
             all_lons = []
             invalid_coords_count = 0
             
             for plot in st.session_state.geo_plots:
-                for corner in ['A', 'B', 'C', 'D']:
-                    lat = plot['corners'][corner].get('lat')
-                    lon = plot['corners'][corner].get('lon')
+                corners = plot.get('corners', {})
+                # Process all corners, not just A, B, C, D
+                for corner_label, corner_data in corners.items():
+                    lat = corner_data.get('lat')
+                    lon = corner_data.get('lon')
                     
                     # Validate coordinates
                     if isinstance(lat, (int, float)) and isinstance(lon, (int, float)):
@@ -4123,46 +4365,54 @@ elif current_step == 8:
             failed_plots = []
             
             # Render each plot as a polygon
+            # CRITICAL: Use ALL corners (A, B, C, D, E, F, ...) not just first 4
             for plot in st.session_state.geo_plots:
                 try:
-                    # Validate coordinates
+                    corners = plot.get('corners', {})
+                    
+                    # Sort corners by label (A, B, C, D, E, F, ...) to maintain order
+                    sorted_corner_labels = sorted(corners.keys())
+                    
+                    # Validate coordinates and build coordinate list
                     coords = []
-                    for corner in ['A', 'B', 'C', 'D']:
-                        lat = plot['corners'][corner].get('lat')
-                        lon = plot['corners'][corner].get('lon')
+                    for corner_label in sorted_corner_labels:
+                        corner_data = corners[corner_label]
+                        lat = corner_data.get('lat')
+                        lon = corner_data.get('lon')
                         
                         # Check if coordinates are valid numbers
                         if not (isinstance(lat, (int, float)) and isinstance(lon, (int, float))):
-                            raise ValueError(f"Invalid coordinates for corner {corner}: lat={lat} (type: {type(lat).__name__}), lon={lon} (type: {type(lon).__name__})")
+                            raise ValueError(f"Invalid coordinates for corner {corner_label}: lat={lat} (type: {type(lat).__name__}), lon={lon} (type: {type(lon).__name__})")
                         if not (-90 <= lat <= 90) or not (-180 <= lon <= 180):
-                            raise ValueError(f"Coordinates out of range: lat={lat}, lon={lon}")
+                            raise ValueError(f"Coordinates out of range for corner {corner_label}: lat={lat}, lon={lon}")
                         
                         coords.append([lat, lon])  # Use list instead of tuple for Folium
                     
-                    # Ensure we have 4 valid corners
-                    if len(coords) != 4:
-                        raise ValueError(f"Expected 4 corners, got {len(coords)}")
+                    # Ensure we have at least 3 valid corners (minimum for a polygon)
+                    if len(coords) < 3:
+                        raise ValueError(f"Expected at least 3 corners, got {len(coords)}")
                     
-                    # Create popup HTML
+                    # Create popup HTML with all corners
+                    popup_lines = [f"<h4>Plot {plot['plot_number']}</h4><hr/>"]
+                    for corner_label in sorted_corner_labels:
+                        corner_data = corners[corner_label]
+                        lat = corner_data.get('lat', 0)
+                        lon = corner_data.get('lon', 0)
+                        popup_lines.append(f"{corner_label}: {lat:.6f}, {lon:.6f}<br>")
                     popup_html = f"""
                     <div style="font-family: Arial;">
-                        <h4>Plot {plot['plot_number']}</h4>
-                        <hr/>
-                        A: {plot['corners']['A']['lat']:.6f}, {plot['corners']['A']['lon']:.6f}<br>
-                        B: {plot['corners']['B']['lat']:.6f}, {plot['corners']['B']['lon']:.6f}<br>
-                        C: {plot['corners']['C']['lat']:.6f}, {plot['corners']['C']['lon']:.6f}<br>
-                        D: {plot['corners']['D']['lat']:.6f}, {plot['corners']['D']['lon']:.6f}
+                        {''.join(popup_lines)}
                     </div>
                     """
                     
-                    # Create tooltip HTML with coordinates
-                    tooltip_html = f"""
-                    <b>Plot {plot['plot_number']}</b><br>
-                    A: {plot['corners']['A']['lat']:.6f}, {plot['corners']['A']['lon']:.6f}<br>
-                    B: {plot['corners']['B']['lat']:.6f}, {plot['corners']['B']['lon']:.6f}<br>
-                    C: {plot['corners']['C']['lat']:.6f}, {plot['corners']['C']['lon']:.6f}<br>
-                    D: {plot['corners']['D']['lat']:.6f}, {plot['corners']['D']['lon']:.6f}
-                    """
+                    # Create tooltip HTML with all corners
+                    tooltip_lines = [f"<b>Plot {plot['plot_number']}</b><br>"]
+                    for corner_label in sorted_corner_labels:
+                        corner_data = corners[corner_label]
+                        lat = corner_data.get('lat', 0)
+                        lon = corner_data.get('lon', 0)
+                        tooltip_lines.append(f"{corner_label}: {lat:.6f}, {lon:.6f}<br>")
+                    tooltip_html = ''.join(tooltip_lines)
                     
                     # Add polygon to map with black outlines matching wireframe (image 8)
                     # Use alternating colors: green, red, blue to match wireframe style
@@ -4211,16 +4461,17 @@ elif current_step == 8:
             map_data = st_folium(m, width=1400, height=700, returned_objects=[])
             
             # Pass plot data to JavaScript
+            # CRITICAL: Include ALL corners (A, B, C, D, E, F, ...) not just first 4
             plots_data_json = json.dumps([
                 {
                     'plot_id': p.get('plot_id', ''),
                     'plot_number': p.get('plot_number', 0),
                     'corners': {
-                        corner: {
-                            'lat': p['corners'][corner].get('lat', 0),
-                            'lon': p['corners'][corner].get('lon', 0)
+                        corner_label: {
+                            'lat': corner_data.get('lat', 0),
+                            'lon': corner_data.get('lon', 0)
                         }
-                        for corner in ['A', 'B', 'C', 'D']
+                        for corner_label, corner_data in p.get('corners', {}).items()
                     }
                 }
                 for p in st.session_state.geo_plots

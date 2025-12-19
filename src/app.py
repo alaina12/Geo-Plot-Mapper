@@ -1981,23 +1981,6 @@ elif current_step == 2:
         # Button to apply changes from the editable viewer
         st.divider()
         
-        # Show instruction
-        st.markdown(
-            """
-            <div style="
-                background:#fee2e2;
-                color:#b91c1c;
-                border:1px solid #fecaca;
-                border-radius:8px;
-                padding:12px 14px;
-                font-weight:700;
-            ">
-                ⚠️ <strong>How to use :</strong> Edit plots above, click <em>Save Changes</em> — the yellow box already contains the copied JSON. Paste it below, then click save button and then click <em>Detect Coordinates</em>.
-            </div>
-            """,
-            unsafe_allow_html=True,
-        )
-        
         # Renumber Plot Section
         with st.expander("Renumber Plots", expanded=False):
             st.write("**Sequential Renumbering with Snake Pattern:**")
@@ -2188,15 +2171,102 @@ elif current_step == 2:
                 st.warning("No plots available for renumbering.")
         
         # Combined Save + Detect action
-        col_text, _ = st.columns([0.6, 0.4])
-        with col_text:
-            coord_json = st.text_area(
-                "Paste coordinates JSON here:",
-                height=110,
-                key="coord_json_input_step2",
-                placeholder='Click "Save Changes" in the viewer above, then copy the JSON from the yellow box and paste it here.',
-                help="After editing plots, click 'Save Changes' to get the JSON coordinates"
-            )
+        # Create textarea with minimal height - it will be auto-filled
+        coord_json = st.text_area(
+            "",
+            height=1,  # Minimal height
+            key="coord_json_input_step2",
+            placeholder='Click "Save Changes" in the viewer above, then copy the JSON from the yellow box and paste it here.',
+            help="After editing plots, click 'Save Changes' to get the JSON coordinates"
+        )
+        
+        # Hide label and make textarea very small and unobtrusive - apply immediately
+        st.markdown("""
+            <style>
+                /* Hide the label completely */
+                label:has-text("Paste coordinates JSON here"),
+                div[data-testid="stVerticalBlock"]:has(textarea[key="coord_json_input_step2"]) label,
+                div[data-testid="column"]:has(textarea[key="coord_json_input_step2"]) label {
+                    display: none !important;
+                    visibility: hidden !important;
+                    height: 0 !important;
+                    margin: 0 !important;
+                    padding: 0 !important;
+                }
+                /* Make textarea tiny - 1px height, transparent, but still functional */
+                textarea[placeholder*="Save Changes"],
+                textarea[placeholder*="coordinates JSON"] {
+                    height: 1px !important;
+                    min-height: 1px !important;
+                    max-height: 1px !important;
+                    padding: 0 !important;
+                    margin: 0 !important;
+                    border: none !important;
+                    background: transparent !important;
+                    color: transparent !important;
+                    font-size: 1px !important;
+                    line-height: 1px !important;
+                    overflow: hidden !important;
+                    resize: none !important;
+                    /* Keep it functional for Streamlit but invisible to user */
+                }
+            </style>
+            <script>
+                // Apply hiding immediately when page loads
+                (function hideTextareaOnLoad() {
+                    function applyStyles() {
+                        const textareas = document.querySelectorAll('textarea');
+                        textareas.forEach(function(ta) {
+                            const placeholder = ta.getAttribute('placeholder') || '';
+                            if (placeholder.includes('Save Changes') || placeholder.includes('coordinates JSON')) {
+                                ta.style.height = '1px';
+                                ta.style.minHeight = '1px';
+                                ta.style.maxHeight = '1px';
+                                ta.style.padding = '0';
+                                ta.style.margin = '0';
+                                ta.style.border = 'none';
+                                ta.style.background = 'transparent';
+                                ta.style.color = 'transparent';
+                                ta.style.fontSize = '1px';
+                                ta.style.lineHeight = '1px';
+                                ta.style.overflow = 'hidden';
+                                ta.style.resize = 'none';
+                                
+                                // Hide label
+                                const label = ta.previousElementSibling;
+                                if (label && label.tagName === 'LABEL') {
+                                    label.style.display = 'none';
+                                }
+                                const labelInContainer = ta.closest('div[data-testid="stVerticalBlock"]')?.querySelector('label');
+                                if (labelInContainer) {
+                                    labelInContainer.style.display = 'none';
+                                }
+                            }
+                        });
+                    }
+                    
+                    // Apply immediately
+                    applyStyles();
+                    
+                    // Retry multiple times to catch it when Streamlit renders
+                    setTimeout(applyStyles, 10);
+                    setTimeout(applyStyles, 50);
+                    setTimeout(applyStyles, 100);
+                    setTimeout(applyStyles, 300);
+                    setTimeout(applyStyles, 500);
+                    setTimeout(applyStyles, 1000);
+                    
+                    // Watch for DOM changes
+                    if (window.MutationObserver) {
+                        const observer = new MutationObserver(applyStyles);
+                        observer.observe(document.body, {
+                            childList: true,
+                            subtree: true
+                        });
+                    }
+                })();
+            </script>
+        """, unsafe_allow_html=True)
         
         # Left-aligned Save & Detect button (compact)
         if st.button("Detect Coordinates", type="primary", use_container_width=False):
@@ -5886,7 +5956,7 @@ elif current_step == 8:
                 # Stay on Step 8 as it's the final step
 
 st.divider()
-st.caption("🔧 Geo Plot Mapper ")
+# st.caption("🔧 Geo Plot Mapper ")
 
 
 

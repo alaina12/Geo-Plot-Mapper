@@ -11,11 +11,14 @@
             padding: 10px;
             font-family: Arial, sans-serif;
             background-color: #f5f5f5;
-            overflow: hidden;
+            overflow: auto;
+            display: flex;
+            flex-direction: column;
+            height: 100vh;
         }
         #canvas-container {
             width: 100%;
-            height: 100%;
+            flex: 1;
             min-height: 600px;
             display: flex;
             justify-content: center;
@@ -26,6 +29,7 @@
             box-shadow: 0 2px 4px rgba(0,0,0,0.1);
             position: relative;
             overflow: auto; /* Allow scrolling if content is larger */
+            margin-top: 0;
         }
         #loading-message {
             position: absolute;
@@ -50,13 +54,15 @@
             border: 1px solid #e0e0e0;
         }
         .button-container {
-            position: absolute;
-            bottom: 60px;
-            right: 20px;
             display: flex;
             flex-direction: row;
             gap: 10px;
-            z-index: 1000;
+            padding: 10px;
+            justify-content: flex-end;
+            background-color: #f5f5f5;
+            margin-bottom: 0;
+            border-bottom: 1px solid #ddd;
+            flex-shrink: 0;
         }
         .zoom-controls-simple {
             position: absolute;
@@ -345,6 +351,13 @@
     </style>
 </head>
 <body>
+    <div class="button-container">
+        <button class="save-button" id="save-btn">Save</button>
+        <button class="merge-button" id="merge-btn">Merge</button>
+        <button class="create-button" id="create-btn">Create</button>
+        <button class="delete-button" id="delete-btn">Delete</button>
+        <button class="save-button" id="move-dots-btn" style="background-color: #17a2b8;" title="Ctrl+Click on dots to select them (green), then click this button">Move</button>
+    </div>
     <div id="canvas-container">
         <div id="loading-message">Loading image and plots...</div>
         <canvas id="fabric-canvas"></canvas>
@@ -361,13 +374,6 @@
     </div>
     <div id="info-panel" style="display: none;">
         <div id="plot-details"></div>
-    </div>
-    <div class="button-container">
-        <button class="save-button" id="save-btn">Save Changes</button>
-        <button class="merge-button" id="merge-btn">Merge Points</button>
-        <button class="create-button" id="create-btn">Create Plot</button>
-        <button class="delete-button" id="delete-btn">Delete Plot</button>
-        <button class="save-button" id="move-dots-btn" style="background-color: #17a2b8;" title="Ctrl+Click on dots to select them (green), then click this button">Move Selected Dots</button>
     </div>
     
     <!-- Help Tooltip -->
@@ -1106,8 +1112,119 @@
                     polygon.originalLeft = minX;
                     polygon.originalTop = minY;
                     
-                    // Add click handler for plot selection (always available, not just in delete mode)
+                    // Add click handler for plot selection and point creation
                     polygon.on('mousedown', function(e) {
+                        // In create mode, allow clicking on polygon to add points on the line
+                        if (createMode) {
+                            e.e.stopPropagation();
+                            e.e.stopImmediatePropagation();
+                            
+                            // Convert mouse coordinates to world coordinates
+                            const worldPoint = mouseToWorldCoordinates(canvas, e.e);
+                            
+                            // Find closest point on polygon line segment
+                            const closest = findClosestPointOnPolygon(worldPoint, polygon);
+                            
+                            if (closest && closest.point) {
+                                // Create point at projected location on the line
+                                // Use handleCreatePlotClick logic but with projected coordinates
+                                const projectedPoint = closest.point;
+                                
+                                // Get scale/offset for coordinate conversion
+                                const allExistingCircles = Object.values(plotPoints).flat();
+                                let scale = 1;
+                                let offsetX = 0;
+                                let offsetY = 0;
+                                
+                                if (allExistingCircles.length > 0) {
+                                    scale = allExistingCircles[0].scale || 1;
+                                    offsetX = allExistingCircles[0].offsetX || 0;
+                                    offsetY = allExistingCircles[0].offsetY || 0;
+                                } else {
+                                    const bgImg = window.canvasBgImg || canvas.backgroundImage;
+                                    if (bgImg) {
+                                        scale = bgImg.originalScaleX || bgImg.scaleX || 1;
+                                        offsetX = bgImg.originalLeft || bgImg.left || 0;
+                                        offsetY = bgImg.originalTop || bgImg.top || 0;
+                                    }
+                                }
+                                
+                                // Calculate original coordinates
+                                const originalX = Math.round((projectedPoint.x - offsetX) / scale);
+                                const originalY = Math.round((projectedPoint.y - offsetY) / scale);
+                                
+                                // Check if too close to existing points from other plots
+                                const minDistance = 15;
+                                let tooClose = false;
+                                
+                                Object.values(plotPoints).flat().forEach(existingCircle => {
+                                    if (existingCircle.plotId !== 'new_plot' && !selectedExistingCircles.includes(existingCircle)) {
+                                        const dx = projectedPoint.x - existingCircle.left;
+                                        const dy = projectedPoint.y - existingCircle.top;
+                                        const distance = Math.sqrt(dx * dx + dy * dy);
+                                        if (distance < minDistance) {
+                                            tooClose = true;
+                                        }
+                                    }
+                                });
+                                
+                                if (!tooClose) {
+                                    // Create point at projected location
+                                    const circle = new fabric.Circle({
+                                        left: projectedPoint.x,
+                                        top: projectedPoint.y,
+                                        radius: 4,
+                                        fill: '#0000FF',
+                                        stroke: '#FFFFFF',
+                                        strokeWidth: 2,
+                                        originX: 'center',
+                                        originY: 'center',
+                                        selectable: true,
+                                        hasControls: false,
+                                        hasBorders: true,
+                                        borderColor: '#0066CC',
+                                        cornerColor: '#0066CC',
+                                        cornerSize: 8,
+                                        plotId: 'new_plot',
+                                        pointIndex: newPlotPoints.length,
+                                        scale: scale,
+                                        offsetX: offsetX,
+                                        offsetY: offsetY,
+                                        originalX: originalX,
+                                        originalY: originalY,
+                                        evented: true,
+                                        hoverCursor: 'move',
+                                        moveCursor: 'move',
+                                        objectCaching: false,
+                                        noScaleCache: true,
+                                        statefullCache: false
+                                    });
+                                    
+                                    circle.on('moving', function(e) {
+                                        const storedScale = this.scale || 1;
+                                        const storedOffsetX = this.offsetX || 0;
+                                        const storedOffsetY = this.offsetY || 0;
+                                        
+                                        this.originalX = Math.round((this.left - storedOffsetX) / storedScale);
+                                        this.originalY = Math.round((this.top - storedOffsetY) / storedScale);
+                                        
+                                        this.setCoords();
+                                        canvas.renderAll();
+                                    });
+                                    
+                                    newPlotPoints.push(circle);
+                                    canvas.add(circle);
+                                    canvas.bringToFront(circle);
+                                    canvas.renderAll();
+                                    
+                                    updateCreateButtonText();
+                                }
+                            }
+                            
+                            return false;
+                        }
+                        
+                        // In delete mode, select plot for deletion
                         if (!createMode && !mergeMode) {
                             e.e.stopPropagation();
                             e.e.stopImmediatePropagation();
@@ -1203,6 +1320,157 @@
             if (loadingMsg) {
                 loadingMsg.style.display = 'none';
             }
+        }
+
+        // ============================================
+        // 2D Geometry Helper Functions
+        // ============================================
+        
+        /**
+         * Convert mouse/screen coordinates to world coordinates by inverting viewportTransform.
+         * This ensures geometry calculations are done in world space, independent of zoom/pan.
+         */
+        function mouseToWorldCoordinates(canvas, mouseEvent) {
+            const pointer = canvas.getPointer(mouseEvent, true);
+            const vpt = canvas.viewportTransform;
+            
+            if (!vpt) {
+                return { x: pointer.x, y: pointer.y };
+            }
+            
+            // Invert the viewport transform matrix to get world coordinates
+            // viewportTransform is a 3x3 matrix stored as [a, b, c, d, e, f, 0, 0, 1]
+            // where [a, b, c, d] is the 2x2 transform and [e, f] is the translation
+            const a = vpt[0], b = vpt[1], c = vpt[2], d = vpt[3], e = vpt[4], f = vpt[5];
+            
+            // Calculate determinant
+            const det = a * d - b * c;
+            
+            if (Math.abs(det) < 1e-10) {
+                // Singular matrix, fallback to pointer coordinates
+                return { x: pointer.x, y: pointer.y };
+            }
+            
+            // Inverse transform: [x', y'] = inv([a, b; c, d]) * ([x, y] - [e, f])
+            const invDet = 1 / det;
+            const invA = d * invDet;
+            const invB = -b * invDet;
+            const invC = -c * invDet;
+            const invD = a * invDet;
+            
+            const tx = pointer.x - e;
+            const ty = pointer.y - f;
+            
+            return {
+                x: invA * tx + invC * ty,
+                y: invB * tx + invD * ty
+            };
+        }
+        
+        /**
+         * Get line segment endpoints in world coordinates from a polygon.
+         * Returns an array of segments, each with {start: {x, y}, end: {x, y}}.
+         * 
+         * CRITICAL: Polygon points are stored relative to polygon.left/top.
+         * We need to convert them to absolute world coordinates.
+         * In Fabric.js, object.left/top are in canvas/world coordinates (not affected by viewportTransform).
+         */
+        function getPolygonSegmentsInWorldSpace(polygon) {
+            if (!polygon || !polygon.points || polygon.points.length < 2) {
+                return [];
+            }
+            
+            // Get relative points and polygon position
+            // polygon.points are relative to polygon.left/top
+            const relativePoints = polygon.points;
+            const polyLeft = polygon.left || 0;
+            const polyTop = polygon.top || 0;
+            
+            // Convert relative points to absolute world coordinates
+            // These are already in world space since polygon.left/top are in world coordinates
+            const absolutePoints = relativePoints.map(relPoint => ({
+                x: relPoint.x + polyLeft,
+                y: relPoint.y + polyTop
+            }));
+            
+            // Create segments from consecutive points (closed polygon)
+            const segments = [];
+            for (let i = 0; i < absolutePoints.length; i++) {
+                const start = absolutePoints[i];
+                const end = absolutePoints[(i + 1) % absolutePoints.length]; // Wrap around for closed polygon
+                segments.push({ start, end });
+            }
+            
+            return segments;
+        }
+        
+        /**
+         * Project a point onto a line segment using vector projection.
+         * Returns the projected point clamped to the segment endpoints.
+         */
+        function projectPointOntoLineSegment(point, segment) {
+            const { start, end } = segment;
+            
+            // Vector from start to end
+            const dx = end.x - start.x;
+            const dy = end.y - start.y;
+            const segmentLengthSq = dx * dx + dy * dy;
+            
+            // If segment has zero length, return start point
+            if (segmentLengthSq < 1e-10) {
+                return { x: start.x, y: start.y };
+            }
+            
+            // Vector from start to point
+            const px = point.x - start.x;
+            const py = point.y - start.y;
+            
+            // Project point onto line: t = dot(px, segment) / ||segment||^2
+            const t = (px * dx + py * dy) / segmentLengthSq;
+            
+            // Clamp t to [0, 1] to ensure point lies on segment
+            const clampedT = Math.max(0, Math.min(1, t));
+            
+            // Calculate projected point
+            return {
+                x: start.x + clampedT * dx,
+                y: start.y + clampedT * dy
+            };
+        }
+        
+        /**
+         * Find the closest point on a polygon to a given world-space point.
+         * Returns the projected point and the segment index.
+         */
+        function findClosestPointOnPolygon(worldPoint, polygon) {
+            const segments = getPolygonSegmentsInWorldSpace(polygon);
+            
+            if (segments.length === 0) {
+                return null;
+            }
+            
+            let closestPoint = null;
+            let minDistance = Infinity;
+            let closestSegmentIndex = -1;
+            
+            segments.forEach((segment, index) => {
+                const projected = projectPointOntoLineSegment(worldPoint, segment);
+                const dx = projected.x - worldPoint.x;
+                const dy = projected.y - worldPoint.y;
+                const distance = Math.sqrt(dx * dx + dy * dy);
+                
+                if (distance < minDistance) {
+                    minDistance = distance;
+                    closestPoint = projected;
+                    closestSegmentIndex = index;
+                }
+            });
+            
+            return {
+                point: closestPoint,
+                segmentIndex: closestSegmentIndex,
+                distance: minDistance
+            };
         }
 
         function updatePolygon(plotId) {
@@ -1487,39 +1755,513 @@
                 }
                 
                 const jsonData = JSON.stringify({plots: data}, null, 2);
+                
+                // Debug: Log what plots are being saved
+                console.log('📊 Saving', data.length, 'plots to JSON');
+                console.log('📊 Plot IDs:', data.map(p => p.id || p.plot_number || 'unknown'));
+                const newPlots = data.filter(p => {
+                    const plotNum = p.plot_number || (p.id ? parseInt(p.id.replace(/[^0-9]/g, '')) : null);
+                    return plotNum && plotNum > 80; // Assuming plots above 80 are "new"
+                });
+                if (newPlots.length > 0) {
+                    console.log('🆕 New plots detected:', newPlots.map(p => p.id || p.plot_number));
+                }
+                
                 copyArea.value = jsonData;
-                copyArea.style.display = 'block';
+                // Hide the yellow box - user doesn't need to see it
+                copyArea.style.display = 'none';
                 
                 const header = document.getElementById('coords-header');
                 if (header) {
-                    header.style.display = 'block';
+                    // Hide the header too
+                    header.style.display = 'none';
                 }
                 
                 // Select all text for easy copying
                 copyArea.select();
                 copyArea.setSelectionRange(0, copyArea.value.length);
                 
-                // Try to copy to clipboard automatically
+                // Try to copy to clipboard automatically (silently, box is hidden)
                 try {
                     document.execCommand('copy');
-                    console.log('Coordinates copied to clipboard automatically');
-                    
-                    // Show success message
-                    const header = document.getElementById('coords-header');
-                    if (header) {
-                        header.innerHTML = '✅ Copied! Paste below ↓ (closes in 15s)';
-                        header.style.backgroundColor = '#4CAF50';
-                    }
+                    console.log('✅ Coordinates copied to clipboard automatically (hidden)');
                 } catch (err) {
-                    console.log('Auto-copy failed, user will copy manually');
+                    console.log('Auto-copy failed:', err);
                 }
                 
-                // Auto-hide after 15 seconds
-                setTimeout(() => {
-                    if (copyArea) copyArea.style.display = 'none';
-                    const header = document.getElementById('coords-header');
-                    if (header) header.style.display = 'none';
-                }, 15000);
+                // AUTO-FILL: Automatically populate the Streamlit textarea below
+                // This eliminates the need for manual copy-paste
+                try {
+                    // The textarea is in the parent Streamlit page (not in this iframe)
+                    // We need to access it via window.parent
+                    if (window.parent && window.parent !== window) {
+                        // Try multiple times with increasing delays to catch the textarea
+                        // Streamlit might render it asynchronously
+                        let attempts = 0;
+                        const maxAttempts = 5;
+                        
+                        function tryAutoFill() {
+                            attempts++;
+                            console.log('🔄 Attempt', attempts, 'to find and fill textarea...');
+                            try {
+                                // Find the Streamlit textarea by its data-testid or key
+                                // Streamlit textareas typically have data-testid="stTextArea"
+                                const parentDoc = window.parent.document;
+                                
+                                // Try multiple selectors to find the textarea
+                                let textarea = null;
+                                
+                                // Method 1: Find by data-testid
+                                textarea = parentDoc.querySelector('textarea[data-testid="stTextArea"]');
+                                
+                                // Method 2: Find by key attribute (if Streamlit sets it)
+                                if (!textarea) {
+                                    textarea = parentDoc.querySelector('textarea[key="coord_json_input_step2"]');
+                                }
+                                
+                                // Method 3: Find by label text containing "Paste coordinates JSON here"
+                                if (!textarea) {
+                                    const labels = parentDoc.querySelectorAll('label');
+                                    for (let label of labels) {
+                                        const labelText = label.textContent || '';
+                                        if (labelText.includes('Paste coordinates JSON') || labelText.includes('Coordinates JSON')) {
+                                            // Find the textarea associated with this label
+                                            const labelFor = label.getAttribute('for');
+                                            if (labelFor) {
+                                                textarea = parentDoc.getElementById(labelFor);
+                                            }
+                                            // Or find the next textarea sibling or in parent container
+                                            if (!textarea) {
+                                                // Try to find textarea in the same container as the label
+                                                let container = label.closest('[class*="stTextArea"], [class*="element-container"], div');
+                                                if (container) {
+                                                    textarea = container.querySelector('textarea');
+                                                }
+                                                // Or find the next textarea sibling
+                                                if (!textarea) {
+                                                    let next = label.nextElementSibling;
+                                                    let depth = 0;
+                                                    while (next && !textarea && depth < 10) {
+                                                        if (next.tagName === 'TEXTAREA') {
+                                                            textarea = next;
+                                                            break;
+                                                        }
+                                                        // Also search within the sibling
+                                                        if (next.querySelector) {
+                                                            textarea = next.querySelector('textarea');
+                                                        }
+                                                        next = next.nextElementSibling;
+                                                        depth++;
+                                                    }
+                                                }
+                                            }
+                                            if (textarea) {
+                                                console.log('📝 Found textarea via label:', labelText);
+                                                break;
+                                            }
+                                        }
+                                    }
+                                }
+                                
+                                // Method 4: Find by placeholder text
+                                if (!textarea) {
+                                    const allTextareas = parentDoc.querySelectorAll('textarea');
+                                    for (let ta of allTextareas) {
+                                        const placeholder = ta.getAttribute('placeholder') || '';
+                                        if (placeholder.includes('Save Changes') || placeholder.includes('coordinates JSON')) {
+                                            textarea = ta;
+                                            console.log('📝 Found textarea via placeholder:', placeholder.substring(0, 50));
+                                            break;
+                                        }
+                                    }
+                                }
+                                
+                                // Method 5: Find any textarea in the Streamlit page (fallback)
+                                if (!textarea) {
+                                    const allTextareas = parentDoc.querySelectorAll('textarea');
+                                    console.log('📝 Total textareas found:', allTextareas.length);
+                                    
+                                    // Filter to only visible textareas
+                                    const visibleTextareas = Array.from(allTextareas).filter(ta => {
+                                        const style = window.parent.getComputedStyle(ta);
+                                        const isVisible = style.display !== 'none' && style.visibility !== 'hidden' && ta.offsetHeight > 0;
+                                        if (isVisible) {
+                                            console.log('📝 Visible textarea found:', {
+                                                id: ta.id,
+                                                placeholder: ta.placeholder ? ta.placeholder.substring(0, 50) : '(none)',
+                                                valueLength: ta.value ? ta.value.length : 0
+                                            });
+                                        }
+                                        return isVisible;
+                                    });
+                                    
+                                    if (visibleTextareas.length > 0) {
+                                        // Try the last visible textarea (most likely to be our target)
+                                        textarea = visibleTextareas[visibleTextareas.length - 1];
+                                        console.log('📝 Using last visible textarea as fallback');
+                                    } else if (allTextareas.length > 0) {
+                                        // Fallback to last textarea even if not visible
+                                        textarea = allTextareas[allTextareas.length - 1];
+                                        console.log('📝 Using last textarea as final fallback');
+                                    }
+                                }
+                                
+                                // Final check: If we found a textarea, verify it's the right one
+                                // by checking if it's near the "Detect Coordinates" button
+                                if (textarea) {
+                                    // Try to find the "Detect Coordinates" button to verify we're in the right area
+                                    const buttons = parentDoc.querySelectorAll('button');
+                                    let detectButton = null;
+                                    for (let btn of buttons) {
+                                        if (btn.textContent && btn.textContent.includes('Detect Coordinates')) {
+                                            detectButton = btn;
+                                            break;
+                                        }
+                                    }
+                                    
+                                    if (detectButton) {
+                                        // Check if textarea is near the button (same container or nearby)
+                                        const buttonRect = detectButton.getBoundingClientRect();
+                                        const textareaRect = textarea.getBoundingClientRect();
+                                        const distance = Math.abs(textareaRect.top - buttonRect.top);
+                                        
+                                        console.log('📝 Distance between textarea and Detect button:', distance, 'px');
+                                        if (distance > 500) {
+                                            console.warn('⚠️ Textarea is far from Detect button, might be wrong one');
+                                            // Try to find a textarea closer to the button
+                                            const allTextareas = parentDoc.querySelectorAll('textarea');
+                                            let closestTextarea = textarea;
+                                            let closestDistance = distance;
+                                            for (let ta of allTextareas) {
+                                                const taRect = ta.getBoundingClientRect();
+                                                const taDistance = Math.abs(taRect.top - buttonRect.top);
+                                                if (taDistance < closestDistance) {
+                                                    closestDistance = taDistance;
+                                                    closestTextarea = ta;
+                                                }
+                                            }
+                                            if (closestTextarea !== textarea) {
+                                                console.log('🔄 Switching to closer textarea');
+                                                textarea = closestTextarea;
+                                            }
+                                        }
+                                    }
+                                }
+                                
+                                if (textarea) {
+                                    console.log('📝 Found textarea:', textarea);
+                                    console.log('📝 Textarea ID:', textarea.id);
+                                    console.log('📝 Textarea classes:', textarea.className);
+                                    console.log('📝 Textarea placeholder:', textarea.placeholder);
+                                    console.log('📝 Textarea current value length:', textarea.value ? textarea.value.length : 0);
+                                    console.log('📝 Textarea current value preview:', textarea.value ? textarea.value.substring(0, 100) : '(empty)');
+                                    console.log('📝 JSON data length:', jsonData.length);
+                                    console.log('📝 First 100 chars of JSON:', jsonData.substring(0, 100));
+                                    
+                                    // Make textarea tiny and unobtrusive but keep it functional
+                                    // Don't use display:none or position:absolute - Streamlit needs it accessible
+                                    textarea.style.height = '1px';
+                                    textarea.style.minHeight = '1px';
+                                    textarea.style.maxHeight = '1px';
+                                    textarea.style.padding = '0';
+                                    textarea.style.margin = '0';
+                                    textarea.style.border = 'none';
+                                    textarea.style.background = 'transparent';
+                                    textarea.style.color = 'transparent';
+                                    textarea.style.fontSize = '1px';
+                                    textarea.style.lineHeight = '1px';
+                                    textarea.style.overflow = 'hidden';
+                                    textarea.style.resize = 'none';
+                                    // Keep it in normal flow but invisible
+                                    
+                                    // Hide the label
+                                    const label = textarea.previousElementSibling;
+                                    if (label && label.tagName === 'LABEL') {
+                                        label.style.display = 'none';
+                                    }
+                                    
+                                    const labelInContainer = textarea.closest('div[data-testid="stVerticalBlock"]')?.querySelector('label');
+                                    if (labelInContainer) {
+                                        labelInContainer.style.display = 'none';
+                                    }
+                                    
+                                    // Ensure value is accessible to Streamlit
+                                    // Force a final sync
+                                    setTimeout(function() {
+                                        if (textarea.value !== jsonData) {
+                                            textarea.value = jsonData;
+                                            textarea.dispatchEvent(new Event('input', { bubbles: true }));
+                                            textarea.dispatchEvent(new Event('change', { bubbles: true }));
+                                        }
+                                    }, 50);
+                                    
+                                    // Check if this textarea already has our data (to avoid duplicate fills)
+                                    const hasOurData = textarea.value && textarea.value.includes('"plots"') && textarea.value.length > 1000;
+                                    if (hasOurData) {
+                                        console.log('⚠️ Textarea already contains plot data, verifying it matches...');
+                                        try {
+                                            const existingData = JSON.parse(textarea.value);
+                                            const newData = JSON.parse(jsonData);
+                                            if (existingData.plots && newData.plots) {
+                                                console.log('📊 Existing plots count:', existingData.plots.length);
+                                                console.log('📊 New plots count:', newData.plots.length);
+                                                if (existingData.plots.length === newData.plots.length) {
+                                                    console.log('✅ Textarea already has correct data, skipping fill');
+                                                    attempts = maxAttempts;
+                                                    return;
+                                                } else {
+                                                    console.log('🔄 Plot count differs, updating textarea...');
+                                                }
+                                            }
+                                        } catch (e) {
+                                            console.log('⚠️ Could not parse existing data, proceeding with fill:', e);
+                                        }
+                                    }
+                                    
+                                    // Method 1: Use React's value setter if available (for React-controlled inputs)
+                                    let valueSet = false;
+                                    try {
+                                        // Get the React fiber/node for this element
+                                        const reactKey = Object.keys(textarea).find(key => key.startsWith('__reactFiber') || key.startsWith('__reactInternalInstance'));
+                                        if (reactKey) {
+                                            console.log('⚛️ Found React instance, using React setter');
+                                            const reactFiber = textarea[reactKey];
+                                            if (reactFiber && reactFiber.memoizedProps) {
+                                                // Try to find the onChange handler
+                                                const props = reactFiber.memoizedProps;
+                                                if (props.onChange || props.onInput) {
+                                                    // Create a synthetic event
+                                                    const syntheticEvent = {
+                                                        target: textarea,
+                                                        currentTarget: textarea,
+                                                        bubbles: true,
+                                                        cancelable: true
+                                                    };
+                                                    textarea.value = jsonData;
+                                                    if (props.onChange) {
+                                                        props.onChange(syntheticEvent);
+                                                        valueSet = true;
+                                                        console.log('✅ Used React onChange handler');
+                                                    } else if (props.onInput) {
+                                                        props.onInput(syntheticEvent);
+                                                        valueSet = true;
+                                                        console.log('✅ Used React onInput handler');
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    } catch (e) {
+                                        console.log('⚠️ React setter approach failed:', e);
+                                    }
+                                    
+                                    // Method 2: Standard DOM manipulation (fallback or if React method didn't work)
+                                    if (!valueSet) {
+                                        // Set the JSON value using native setter
+                                        const nativeInputValueSetter = Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype, 'value');
+                                        if (nativeInputValueSetter && nativeInputValueSetter.set) {
+                                            nativeInputValueSetter.set.call(textarea, jsonData);
+                                            console.log('✅ Used native value setter');
+                                        } else {
+                                            textarea.value = jsonData;
+                                            console.log('✅ Used direct value assignment');
+                                        }
+                                    }
+                                    
+                                    // Verify the value was set
+                                    if (textarea.value === jsonData || textarea.value.length === jsonData.length) {
+                                        console.log('✅ Value set successfully, length:', textarea.value.length);
+                                    } else {
+                                        console.warn('⚠️ Value mismatch! Expected length:', jsonData.length, 'Got length:', textarea.value ? textarea.value.length : 0);
+                                        // Try setting again with native setter
+                                        try {
+                                            const nativeInputValueSetter = Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype, 'value').set;
+                                            nativeInputValueSetter.call(textarea, jsonData);
+                                            console.log('🔄 Retried with native setter');
+                                        } catch (e) {
+                                            textarea.value = jsonData;
+                                        }
+                                    }
+                                    
+                                    // Dispatch multiple event types for maximum compatibility
+                                    // These events are critical for React to detect the change
+                                    const eventsToDispatch = [
+                                        new Event('input', { bubbles: true, cancelable: true }),
+                                        new Event('change', { bubbles: true, cancelable: true })
+                                    ];
+                                    
+                                    // Try InputEvent (more React-like)
+                                    try {
+                                        eventsToDispatch.push(new InputEvent('input', {
+                                            bubbles: true,
+                                            cancelable: true,
+                                            inputType: 'insertText',
+                                            data: jsonData
+                                        }));
+                                    } catch (e) {
+                                        // InputEvent might not be available
+                                    }
+                                    
+                                    // Dispatch all events
+                                    eventsToDispatch.forEach(event => {
+                                        textarea.dispatchEvent(event);
+                                    });
+                                    console.log('✅ Dispatched', eventsToDispatch.length, 'events');
+                                    
+                                    // Trigger focus/blur sequence to ensure Streamlit processes it
+                                    // Don't scroll - textarea is hidden
+                                    textarea.focus();
+                                    
+                                    // Small delay before blur to let Streamlit process
+                                    setTimeout(function() {
+                                        // Verify value is still set
+                                        if (textarea.value !== jsonData && textarea.value.length !== jsonData.length) {
+                                            console.warn('⚠️ Value was reset! Re-setting...');
+                                            const nativeInputValueSetter = Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype, 'value').set;
+                                            nativeInputValueSetter.call(textarea, jsonData);
+                                            textarea.dispatchEvent(new Event('input', { bubbles: true }));
+                                            textarea.dispatchEvent(new Event('change', { bubbles: true }));
+                                        }
+                                        
+                                        // Try one more time to trigger React update by simulating user input
+                                        // This is a more aggressive approach for React-controlled inputs
+                                        try {
+                                            // Clear and re-set to force React to recognize the change
+                                            textarea.value = '';
+                                            textarea.dispatchEvent(new Event('input', { bubbles: true }));
+                                            
+                                            // Small delay then set the full value
+                                            setTimeout(function() {
+                                                const nativeInputValueSetter = Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype, 'value').set;
+                                                nativeInputValueSetter.call(textarea, jsonData);
+                                                
+                                                // Dispatch all events again
+                                                textarea.dispatchEvent(new Event('input', { bubbles: true, cancelable: true }));
+                                                textarea.dispatchEvent(new Event('change', { bubbles: true, cancelable: true }));
+                                                
+                                                // Try InputEvent
+                                                try {
+                                                    textarea.dispatchEvent(new InputEvent('input', {
+                                                        bubbles: true,
+                                                        cancelable: true,
+                                                        inputType: 'insertText'
+                                                    }));
+                                                } catch (e) {}
+                                                
+                                                textarea.blur();
+                                                
+                                                // Final verification
+                                                verifyAndLogFinalValue();
+                                            }, 50);
+                                        } catch (e) {
+                                            console.log('⚠️ Aggressive React update failed, using standard approach:', e);
+                                            textarea.blur();
+                                            
+                                            // One more attempt to trigger change after blur
+                                            textarea.dispatchEvent(new Event('change', { bubbles: true, cancelable: true }));
+                                            
+                                            // Final verification
+                                            verifyAndLogFinalValue();
+                                        }
+                                        
+                                        function verifyAndLogFinalValue() {
+                                            // Final verification - check actual displayed value
+                                            const finalValue = textarea.value;
+                                            console.log('📝 Final textarea value length:', finalValue ? finalValue.length : 0);
+                                            console.log('📝 Final value first 200 chars:', finalValue ? finalValue.substring(0, 200) : '(empty)');
+                                            
+                                            // Check if the value contains all plots
+                                            try {
+                                                const parsed = JSON.parse(finalValue);
+                                                if (parsed.plots) {
+                                                    console.log('📊 Final value contains', parsed.plots.length, 'plots');
+                                                    const plotIds = parsed.plots.map(p => p.id || p.plot_number || 'unknown');
+                                                    console.log('📊 Plot IDs in final value (first 10):', plotIds.slice(0, 10).join(', '), '...');
+                                                    console.log('📊 Plot IDs in final value (last 10):', plotIds.slice(-10).join(', '));
+                                                    
+                                                    // Check for new plots (e.g., Plot 82)
+                                                    const newPlots = parsed.plots.filter(p => {
+                                                        const num = p.plot_number || (p.id ? parseInt(p.id.replace(/[^0-9]/g, '')) : 0);
+                                                        return num > 80;
+                                                    });
+                                                    if (newPlots.length > 0) {
+                                                        console.log('🆕 New plots found in final value:', newPlots.map(p => p.id || p.plot_number));
+                                                    } else {
+                                                        console.warn('⚠️ No new plots (e.g., Plot 82) found in final value!');
+                                                        console.warn('⚠️ This suggests the textarea might not have the full data');
+                                                    }
+                                                    
+                                                    // Verify we have the expected number of plots
+                                                    const expectedPlotCount = data.length; // data is the plots array from showCopyArea
+                                                    if (parsed.plots.length !== expectedPlotCount) {
+                                                        console.error('❌ Plot count mismatch! Expected:', expectedPlotCount, 'Got:', parsed.plots.length);
+                                                        console.error('❌ The textarea might not have been updated correctly');
+                                                    } else {
+                                                        console.log('✅ Plot count matches expected:', expectedPlotCount);
+                                                    }
+                                                }
+                                            } catch (e) {
+                                                console.warn('⚠️ Could not parse final value:', e);
+                                            }
+                                            
+                                            if (finalValue && finalValue.length > 0) {
+                                                console.log('✅ Auto-filled Streamlit textarea with JSON data (length: ' + finalValue.length + ')');
+                                                // Textarea is hidden, no need to update header
+                                                
+                                                // Stop retrying since we found and filled it
+                                                attempts = maxAttempts;
+                                            } else {
+                                                console.error('❌ Textarea appears empty after setting value!');
+                                                console.error('❌ This might be a Streamlit React issue - try manually pasting');
+                                            }
+                                        }
+                                    }, 150);
+                                } else {
+                                    console.warn('⚠️ Attempt', attempts, '- Could not find Streamlit textarea');
+                                    if (attempts === maxAttempts) {
+                                        console.warn('⚠️ Total textareas found:', parentDoc.querySelectorAll('textarea').length);
+                                        console.warn('⚠️ All textareas:', Array.from(parentDoc.querySelectorAll('textarea')).map(t => ({
+                                            id: t.id,
+                                            valueLength: t.value ? t.value.length : 0,
+                                            placeholder: t.placeholder
+                                        })));
+                                    }
+                                }
+                            } catch (e) {
+                                console.warn('⚠️ Could not auto-fill textarea (may be cross-origin restriction):', e);
+                            }
+                            
+                            // If we didn't find it and haven't exceeded max attempts, try again
+                            // Note: textarea variable is scoped to the try block, so we check attempts
+                            if (attempts < maxAttempts) {
+                                // Check if we actually found and filled a textarea by looking for one with our JSON
+                                const parentDoc = window.parent.document;
+                                const allTextareas = parentDoc.querySelectorAll('textarea');
+                                let foundFilled = false;
+                                for (let ta of allTextareas) {
+                                    if (ta.value && ta.value.includes('"plots"') && ta.value.length > 100) {
+                                        foundFilled = true;
+                                        break;
+                                    }
+                                }
+                                
+                                if (!foundFilled) {
+                                    setTimeout(tryAutoFill, 200 * attempts); // Exponential backoff
+                                } else {
+                                    console.log('✅ Textarea already filled, stopping retries');
+                                }
+                            } else if (attempts >= maxAttempts) {
+                                console.error('❌ Failed to find or fill textarea after', maxAttempts, 'attempts');
+                            }
+                        }
+                        
+                        // Start first attempt after initial delay
+                        setTimeout(tryAutoFill, 300);
+                    }
+                } catch (e) {
+                    console.warn('⚠️ Error accessing parent window:', e);
+                }
+                
+                // Already hidden, no need for auto-hide timer
             }
             
             console.log('Changes saved:', updatedPlots.length, 'plots updated');
@@ -2012,12 +2754,13 @@
             
             // Don't create on existing plot elements (but allow clicking on background and circles)
             // Circles are handled by their own mousedown handler in create mode
+            // Polygons are handled by their own mousedown handler in create mode (with line projection)
             if (options.target && options.target !== canvas.backgroundImage) {
                 // Allow clicking on circles (they handle their own selection)
                 if (options.target.type === 'circle') {
                     return; // Let circle handler deal with it
                 }
-                // Block clicks on polygons and text
+                // Block clicks on polygons (they handle their own projection logic) and text
                 if (options.target.plotId || options.target.type === 'polygon' || options.target.type === 'text') {
                     return;
                 }
@@ -2026,9 +2769,9 @@
             // If we have selected existing circles, we can create additional points
             // If no existing circles selected, create new points as before
             
-            // CRITICAL: Use getPointer with absolute coordinates (true parameter)
-            // This respects canvas zoom/pan transformations and ensures accurate pointer calculations
-            const pointer = canvas.getPointer(options.e, true);
+            // CRITICAL: Convert mouse coordinates to world coordinates
+            // This ensures geometry calculations are done in world space, independent of zoom/pan
+            const worldPoint = mouseToWorldCoordinates(canvas, options.e);
             
             // CRITICAL: Use the same scale/offset as existing plots (stored in circles)
             // Background image scaling does NOT affect coordinate space - we use stored values from circles
@@ -2070,8 +2813,8 @@
             Object.values(plotPoints).flat().forEach(existingCircle => {
                 // Skip if it's a new plot point (same plot being created) or a selected existing circle
                 if (existingCircle.plotId !== 'new_plot' && !selectedExistingCircles.includes(existingCircle)) {
-                    const dx = pointer.x - existingCircle.left;
-                    const dy = pointer.y - existingCircle.top;
+                    const dx = worldPoint.x - existingCircle.left;
+                    const dy = worldPoint.y - existingCircle.top;
                     const distance = Math.sqrt(dx * dx + dy * dy);
                     if (distance < minDistance) {
                         tooClose = true;
@@ -2089,16 +2832,16 @@
                 return; // Don't create point if too close to points from other plots
             }
             
-            console.log('Creating new point', newPlotPoints.length + 1, 'at:', pointer.x, pointer.y);
+            console.log('Creating new point', newPlotPoints.length + 1, 'at world coords:', worldPoint.x, worldPoint.y);
             
             // Create a new point - ensure it's on top of everything
-            // Calculate original coordinates from canvas pointer position
-            const originalX = Math.round((pointer.x - offsetX) / scale);
-            const originalY = Math.round((pointer.y - offsetY) / scale);
+            // Calculate original coordinates from world coordinates
+            const originalX = Math.round((worldPoint.x - offsetX) / scale);
+            const originalY = Math.round((worldPoint.y - offsetY) / scale);
             
             const circle = new fabric.Circle({
-                left: pointer.x,
-                top: pointer.y,
+                left: worldPoint.x,
+                top: worldPoint.y,
                 radius: 4,
                 fill: '#0000FF', // Blue for new points
                 stroke: '#FFFFFF',
@@ -3155,8 +3898,118 @@
                 polygon.originalLeft = minX;
                 polygon.originalTop = minY;
                 
-                // Add click handler for plot selection (same as existing plots)
+                // Add click handler for plot selection and point creation (same as existing plots)
                 polygon.on('mousedown', function(e) {
+                    // In create mode, allow clicking on polygon to add points on the line
+                    if (createMode) {
+                        e.e.stopPropagation();
+                        e.e.stopImmediatePropagation();
+                        
+                        // Convert mouse coordinates to world coordinates
+                        const worldPoint = mouseToWorldCoordinates(canvas, e.e);
+                        
+                        // Find closest point on polygon line segment
+                        const closest = findClosestPointOnPolygon(worldPoint, polygon);
+                        
+                        if (closest && closest.point) {
+                            // Create point at projected location on the line
+                            const projectedPoint = closest.point;
+                            
+                            // Get scale/offset for coordinate conversion
+                            const allExistingCircles = Object.values(plotPoints).flat();
+                            let scale = 1;
+                            let offsetX = 0;
+                            let offsetY = 0;
+                            
+                            if (allExistingCircles.length > 0) {
+                                scale = allExistingCircles[0].scale || 1;
+                                offsetX = allExistingCircles[0].offsetX || 0;
+                                offsetY = allExistingCircles[0].offsetY || 0;
+                            } else {
+                                const bgImg = window.canvasBgImg || canvas.backgroundImage;
+                                if (bgImg) {
+                                    scale = bgImg.originalScaleX || bgImg.scaleX || 1;
+                                    offsetX = bgImg.originalLeft || bgImg.left || 0;
+                                    offsetY = bgImg.originalTop || bgImg.top || 0;
+                                }
+                            }
+                            
+                            // Calculate original coordinates
+                            const originalX = Math.round((projectedPoint.x - offsetX) / scale);
+                            const originalY = Math.round((projectedPoint.y - offsetY) / scale);
+                            
+                            // Check if too close to existing points from other plots
+                            const minDistance = 15;
+                            let tooClose = false;
+                            
+                            Object.values(plotPoints).flat().forEach(existingCircle => {
+                                if (existingCircle.plotId !== 'new_plot' && !selectedExistingCircles.includes(existingCircle)) {
+                                    const dx = projectedPoint.x - existingCircle.left;
+                                    const dy = projectedPoint.y - existingCircle.top;
+                                    const distance = Math.sqrt(dx * dx + dy * dy);
+                                    if (distance < minDistance) {
+                                        tooClose = true;
+                                    }
+                                }
+                            });
+                            
+                            if (!tooClose) {
+                                // Create point at projected location
+                                const circle = new fabric.Circle({
+                                    left: projectedPoint.x,
+                                    top: projectedPoint.y,
+                                    radius: 4,
+                                    fill: '#0000FF',
+                                    stroke: '#FFFFFF',
+                                    strokeWidth: 2,
+                                    originX: 'center',
+                                    originY: 'center',
+                                    selectable: true,
+                                    hasControls: false,
+                                    hasBorders: true,
+                                    borderColor: '#0066CC',
+                                    cornerColor: '#0066CC',
+                                    cornerSize: 8,
+                                    plotId: 'new_plot',
+                                    pointIndex: newPlotPoints.length,
+                                    scale: scale,
+                                    offsetX: offsetX,
+                                    offsetY: offsetY,
+                                    originalX: originalX,
+                                    originalY: originalY,
+                                    evented: true,
+                                    hoverCursor: 'move',
+                                    moveCursor: 'move',
+                                    objectCaching: false,
+                                    noScaleCache: true,
+                                    statefullCache: false
+                                });
+                                
+                                circle.on('moving', function(e) {
+                                    const storedScale = this.scale || 1;
+                                    const storedOffsetX = this.offsetX || 0;
+                                    const storedOffsetY = this.offsetY || 0;
+                                    
+                                    this.originalX = Math.round((this.left - storedOffsetX) / storedScale);
+                                    this.originalY = Math.round((this.top - storedOffsetY) / storedScale);
+                                    
+                                    this.setCoords();
+                                    canvas.renderAll();
+                                });
+                                
+                                newPlotPoints.push(circle);
+                                canvas.add(circle);
+                                canvas.bringToFront(circle);
+                                canvas.renderAll();
+                                
+                                updateCreateButtonText();
+                            }
+                        }
+                        
+                        return false;
+                    }
+                    
+                    // In delete mode, select plot for deletion
                     if (!createMode && !mergeMode) {
                         e.e.stopPropagation();
                         e.e.stopImmediatePropagation();
@@ -4086,18 +4939,6 @@
                     applyCanvasViewZoom(canvasViewZoom - 0.1);
                 });
             }
-            
-            // Mouse wheel zoom
-            canvas.on('mouse:wheel', function(opt) {
-                const delta = opt.e.deltaY;
-                if (delta > 0) {
-                    applyCanvasViewZoom(canvasViewZoom - 0.1);
-                } else {
-                    applyCanvasViewZoom(canvasViewZoom + 0.1);
-                }
-                opt.e.preventDefault();
-                opt.e.stopPropagation();
-            });
         });
     </script>
 </body>

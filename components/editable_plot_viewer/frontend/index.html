@@ -415,25 +415,19 @@
     <!-- Pixel Move Dialog -->
     <div id="pixel-move-overlay" class="dialog-overlay" style="display: none;">
         <div id="pixel-move-dialog">
-            <h3>📐 Move Selected Dots by Pixels</h3>
-            <p class="info-text">
-                <strong id="selected-dots-count" style="color: #4CAF50;">0 dots selected</strong><br>
-                Enter the number of pixels to move the selected dots.<br>
-                <small style="color: #666;">💡 dx: positive → right, negative → left<br>dy: positive → down, negative → up</small>
-            </p>
             <div class="input-row">
                 <div class="input-group">
-                    <label for="move-dx">dx (horizontal)</label>
+                    <label for="move-dx">dx</label>
                     <input type="number" id="move-dx" value="0" step="1">
                 </div>
                 <div class="input-group">
-                    <label for="move-dy">dy (vertical)</label>
+                    <label for="move-dy">dy</label>
                     <input type="number" id="move-dy" value="0" step="1">
                 </div>
             </div>
             <div class="button-group">
                 <button class="cancel-btn" id="cancel-move-btn">Cancel</button>
-                <button class="apply-btn" id="apply-move-btn">Apply Move</button>
+                <button class="apply-btn" id="apply-move-btn">Apply</button>
             </div>
         </div>
     </div>
@@ -441,8 +435,8 @@
     <script>
         // Initialize Fabric.js canvas with proper dimensions
         const container = document.getElementById('canvas-container');
-        const initialWidth = container ? Math.max(container.clientWidth - 20, 800) : 1200;
-        const initialHeight = container ? Math.max(container.clientHeight - 20, 600) : 800;
+        const initialWidth = container ? Math.max(container.clientWidth - 20, 800) : 1000;
+        const initialHeight = container ? Math.max(container.clientHeight - 20, 600) : 650;
         
         console.log('Initializing canvas with dimensions:', initialWidth, 'x', initialHeight);
         
@@ -484,8 +478,13 @@
         canvas.on('mouse:down', function(opt) {
             const evt = opt.e;
             
-            // If clicking on empty space without Ctrl (and not in special modes), clear dot selection
+            // If clicking on empty space without Ctrl (and not in special modes), clear selections
             if (!opt.target && !evt.ctrlKey && !evt.metaKey && !createMode && !mergeMode && !deleteMode) {
+                // Clear plot selection when clicking empty canvas
+                if (selectedPlotForDelete) {
+                    clearPlotSelection();
+                }
+                // Clear dot selection
                 if (selectedDotsForMove.length > 0) {
                     clearDotSelection();
                 }
@@ -570,12 +569,118 @@
             }
         });
         
-        // Escape key to clear dot selection
+        // Escape key to clear selections and cancel create mode
         document.addEventListener('keydown', function(e) {
             if (e.key === 'Escape') {
+                // If in create mode, cancel it (clear newly created points)
+                if (createMode && newPlotPoints.length > 0) {
+                    // Clear all newly created points
+                    newPlotPoints.forEach(point => canvas.remove(point));
+                    newPlotPoints = [];
+                    selectedExistingCircles = [];
+                    updateCreateButtonText();
+                    canvas.renderAll();
+                    console.log('Create mode cancelled via Escape key');
+                }
+                // Clear plot selection first
+                if (selectedPlotForDelete) {
+                    clearPlotSelection();
+                }
+                // Clear dot selection
                 if (selectedDotsForMove.length > 0) {
                     clearDotSelection();
                     console.log('Dot selection cleared via Escape key');
+                }
+                // Also clear merge selection
+                selectedPointsForMerge.forEach(circle => {
+                    circle.set({ fill: '#FF0000', stroke: '#FFFFFF', strokeWidth: 2 });
+                });
+                selectedPointsForMerge = [];
+                updateMergeButtonText();
+            } else if (e.key === 'Enter' && !e.shiftKey && !e.ctrlKey && !e.altKey) {
+                // Enter key to finish plot creation/editing (only if not in input field)
+                if (document.activeElement.tagName !== 'INPUT' && document.activeElement.tagName !== 'TEXTAREA') {
+                    // Don't create plot if a plot is selected for deletion
+                    if (selectedPlotForDelete) {
+                        // Just deselect the plot, don't create new plot
+                        clearPlotSelection();
+                        return;
+                    }
+                    // Only create/modify plot if in create mode and have points
+                    if (createMode) {
+                        const totalPoints = selectedExistingCircles.length + newPlotPoints.length;
+                        
+                        // If editing existing plot (has selectedExistingCircles), modify it directly
+                        // No minimum point requirement - user can add any number of points
+                        if (selectedExistingCircles.length > 0 && newPlotPoints.length > 0) {
+                            // Get unique plot IDs from selected circles
+                            const selectedPlotIds = new Set(selectedExistingCircles.map(c => c.plotId).filter(id => id && id !== 'new_plot'));
+                            
+                            // If all selected circles belong to the same existing plot, modify that plot
+                            if (selectedPlotIds.size === 1) {
+                                const plotIdToModify = Array.from(selectedPlotIds)[0];
+                                modifyExistingPlot(plotIdToModify, selectedExistingCircles, newPlotPoints);
+                                return;
+                            }
+                        }
+                        
+                        // Creating a NEW plot (no selectedExistingCircles) - requires 3+ points
+                        if (selectedExistingCircles.length === 0) {
+                            if (newPlotPoints.length >= 3) {
+                                createNewPlot();
+                            } else if (newPlotPoints.length > 0) {
+                                // Only show alert when creating NEW plot with insufficient points
+                                alert('A new plot needs at least 3 points. Please add more points before finishing.');
+                            }
+                            // If no points, do nothing
+                        }
+                    }
+                }
+            } else if (e.key === 'Delete' || e.key === 'Backspace') {
+                // Delete key to delete selected plot, points, or newly created points (LIFO)
+                if (document.activeElement.tagName !== 'INPUT' && document.activeElement.tagName !== 'TEXTAREA') {
+                    // LIFO: If in create mode and there are newly created points, delete the last one (most recent)
+                    if (createMode && newPlotPoints.length > 0) {
+                        const lastPoint = newPlotPoints.pop(); // Remove last point (LIFO)
+                        canvas.remove(lastPoint);
+                        canvas.renderAll();
+                        
+                        // Update button text to show remaining points
+                        updateCreateButtonText();
+                        console.log('Deleted last created point. Remaining points:', newPlotPoints.length);
+                        return;
+                    }
+                    
+                    if (selectedPlotForDelete) {
+                        showDeleteConfirmation(selectedPlotForDelete);
+                    } else if (selectedDotsForMove.length > 0) {
+                        // Delete selected points
+                        selectedDotsForMove.forEach(circle => {
+                            const plotId = circle.plotId;
+                            if (plotId && plotPoints[plotId]) {
+                                const index = plotPoints[plotId].indexOf(circle);
+                                if (index > -1) {
+                                    plotPoints[plotId].splice(index, 1);
+                                    canvas.remove(circle);
+                                    if (plotPoints[plotId].length < 3) {
+                                        // Plot has less than 3 points, remove it
+                                        const polygon = plotObjects.find(p => p.plotId === plotId);
+                                        if (polygon) {
+                                            canvas.remove(polygon);
+                                            const plotIndex = plotObjects.indexOf(polygon);
+                                            if (plotIndex > -1) plotObjects.splice(plotIndex, 1);
+                                        }
+                                        delete plotPoints[plotId];
+                                    } else {
+                                        updatePolygon(plotId);
+                                    }
+                                }
+                            }
+                        });
+                        selectedDotsForMove = [];
+                        updateMoveButtonCounter();
+                        canvas.renderAll();
+                    }
                 }
             }
         });
@@ -968,37 +1073,61 @@
                         circleMoved = false;
                         circleMouseDownTime = Date.now();
                         
-                        // Handle Ctrl+Click for multi-dot selection (for pixel move feature)
+                        // Handle Ctrl+Click for multi-dot selection (for pixel move and merge)
                         if (e.e.ctrlKey || e.e.metaKey) {
                             e.e.stopPropagation();
                             e.e.stopImmediatePropagation();
                             
-                            const isAlreadySelected = selectedDotsForMove.includes(this);
+                            // Add to move selection
+                            const isAlreadySelectedMove = selectedDotsForMove.includes(this);
                             
-                            if (isAlreadySelected) {
-                                // Deselect
+                            if (isAlreadySelectedMove) {
+                                // Deselect from move
                                 const index = selectedDotsForMove.indexOf(this);
                                 selectedDotsForMove.splice(index, 1);
+                            } else {
+                                // Select for move
+                                selectedDotsForMove.push(this);
+                            }
+                            
+                            // Also handle merge selection (max 2 points)
+                            const isAlreadySelectedMerge = selectedPointsForMerge.includes(this);
+                            
+                            if (isAlreadySelectedMerge) {
+                                // Deselect from merge
+                                const index = selectedPointsForMerge.indexOf(this);
+                                selectedPointsForMerge.splice(index, 1);
+                                this.set({ fill: '#FF0000', stroke: '#FFFFFF', strokeWidth: 2 });
+                            } else {
+                                // Select for merge (max 2 points)
+                                if (selectedPointsForMerge.length < 2) {
+                                    selectedPointsForMerge.push(this);
+                                    this.set({ fill: '#00FF00', stroke: '#000000', strokeWidth: 3 });
+                                } else {
+                                    // Already have 2 selected, replace first
+                                    const firstPoint = selectedPointsForMerge[0];
+                                    firstPoint.set({ fill: '#FF0000', stroke: '#FFFFFF', strokeWidth: 2 });
+                                    selectedPointsForMerge.shift();
+                                    selectedPointsForMerge.push(this);
+                                    this.set({ fill: '#00FF00', stroke: '#000000', strokeWidth: 3 });
+                                }
+                            }
+                            
+                            // Update visual for move selection
+                            if (isAlreadySelectedMove) {
                                 this.set({ stroke: '#FFFFFF', strokeWidth: 2 });
                             } else {
-                                // Select
-                                selectedDotsForMove.push(this);
-                                this.set({ stroke: '#4CAF50', strokeWidth: 4 }); // Green highlight
+                                this.set({ stroke: '#4CAF50', strokeWidth: 4 }); // Green highlight for move
                             }
                             
                             this.setCoords();
                             canvas.renderAll();
-                            console.log('Selected dots for move:', selectedDotsForMove.length);
                             updateMoveButtonCounter();
+                            updateMergeButtonText();
                             return false;
                         }
                         
-                        if (mergeMode) {
-                            e.e.stopPropagation();
-                            e.e.stopImmediatePropagation();
-                            togglePointForMerge(this);
-                            return false;
-                        } else if (createMode) {
+                        if (createMode) {
                             // In create mode, handle circle selection for new plot
                             e.e.stopPropagation();
                             e.e.stopImmediatePropagation();
@@ -1046,11 +1175,7 @@
                     
                     // Handle mouseup for plot selection (only if not dragged)
                     circle.on('mouseup', function(e) {
-                        if (mergeMode) {
-                            e.e.stopPropagation();
-                            e.e.stopImmediatePropagation();
-                            return false;
-                        } else if (!createMode && !mergeMode && !circleMoved) {
+                        if (!createMode && !circleMoved) {
                             // Only select if it was a click (not a drag)
                             const clickDuration = Date.now() - circleMouseDownTime;
                             if (clickDuration < 300) { // Quick click, not a drag
@@ -2291,7 +2416,7 @@
             const deleteBtn = document.getElementById('delete-btn');
             const createBtn = document.getElementById('create-btn');
             if (mergeMode) {
-                mergeBtn.textContent = 'Cancel Merge';
+                mergeBtn.textContent = 'Merge';
                 mergeBtn.style.backgroundColor = '#f44336';
                 canvas.defaultCursor = 'pointer';
                 canvas.hoverCursor = 'pointer';
@@ -2318,7 +2443,7 @@
                     });
                 });
             } else {
-                mergeBtn.textContent = 'Merge Points';
+                mergeBtn.textContent = 'Merge';
                 mergeBtn.style.backgroundColor = '#FF9800';
                 canvas.defaultCursor = 'default';
                 canvas.hoverCursor = 'default';
@@ -2367,17 +2492,13 @@
             // Force immediate render
             canvas.renderAll();
             
-            // Update merge button text to show selection status
+            // Update merge button text
             const mergeBtn = document.getElementById('merge-btn');
             if (mergeBtn) {
+                mergeBtn.textContent = 'Merge';
                 if (selectedPointsForMerge.length === 2) {
-                    mergeBtn.textContent = 'Click to Merge (2 selected)';
                     mergeBtn.style.backgroundColor = '#4CAF50';
-                } else if (selectedPointsForMerge.length === 1) {
-                    mergeBtn.textContent = 'Select Another Point (1 selected)';
-                    mergeBtn.style.backgroundColor = '#FF9800';
                 } else {
-                    mergeBtn.textContent = 'Select Points to Merge';
                     mergeBtn.style.backgroundColor = '#FF9800';
                 }
             }
@@ -2398,10 +2519,11 @@
             
             if (mergeBtn) {
                 mergeBtn.onclick = function() {
-                    if (mergeMode && selectedPointsForMerge.length === 2) {
+                    // Merge works with Ctrl+Click selection (no mode needed)
+                    if (selectedPointsForMerge.length === 2) {
                         mergeSelectedPoints();
                     } else {
-                        enableMergeMode();
+                        alert('Please select exactly 2 points using Ctrl+Click, then click Merge.');
                     }
                 };
             }
@@ -2420,6 +2542,18 @@
             
             if (deleteBtn) {
                 deleteBtn.onclick = function() {
+                    // LIFO: If in create mode and there are newly created points, delete the last one (most recent)
+                    if (createMode && newPlotPoints.length > 0) {
+                        const lastPoint = newPlotPoints.pop(); // Remove last point (LIFO)
+                        canvas.remove(lastPoint);
+                        canvas.renderAll();
+                        
+                        // Update button text to show remaining points
+                        updateCreateButtonText();
+                        console.log('Deleted last created point. Remaining points:', newPlotPoints.length);
+                        return;
+                    }
+                    
                     // Check if a plot is selected
                     if (selectedPlotForDelete) {
                         // Show confirmation dialog for the selected plot
@@ -2473,14 +2607,6 @@
                 moveDotsBtn.onclick = function() {
                     if (selectedDotsForMove.length > 0) {
                         showMoveDotsDialog();
-                    } else {
-                        const originalText = moveDotsBtn.textContent;
-                        moveDotsBtn.textContent = '⚠️ Select dots first (Ctrl+Click)';
-                        moveDotsBtn.style.backgroundColor = '#ff9800';
-                        setTimeout(() => {
-                            moveDotsBtn.textContent = originalText;
-                            moveDotsBtn.style.backgroundColor = '#2196F3';
-                        }, 2500);
                     }
                 };
             }
@@ -2522,12 +2648,10 @@
         function updateMoveButtonCounter() {
             const moveDotsBtn = document.getElementById('move-dots-btn');
             if (moveDotsBtn) {
-                const count = selectedDotsForMove.length;
-                if (count > 0) {
-                    moveDotsBtn.textContent = `Move Selected Dots (${count})`;
+                moveDotsBtn.textContent = 'Move';
+                if (selectedDotsForMove.length > 0) {
                     moveDotsBtn.style.backgroundColor = '#28a745'; // Success green when dots selected
                 } else {
-                    moveDotsBtn.textContent = 'Move Selected Dots';
                     moveDotsBtn.style.backgroundColor = '#17a2b8'; // Info blue when none selected
                 }
             }
@@ -2535,16 +2659,11 @@
         
         function showMoveDotsDialog() {
             const pixelMoveOverlay = document.getElementById('pixel-move-overlay');
-            const selectedDotsCount = document.getElementById('selected-dots-count');
             const moveDxInput = document.getElementById('move-dx');
             const moveDyInput = document.getElementById('move-dy');
             
             if (pixelMoveOverlay) {
                 pixelMoveOverlay.style.display = 'block';
-            }
-            
-            if (selectedDotsCount) {
-                selectedDotsCount.textContent = `${selectedDotsForMove.length} dot${selectedDotsForMove.length > 1 ? 's' : ''} selected`;
             }
             
             if (moveDxInput) moveDxInput.value = '0';
@@ -2650,7 +2769,7 @@
             const moveDotsBtn = document.getElementById('move-dots-btn');
             if (moveDotsBtn) {
                 const originalText = moveDotsBtn.textContent;
-                moveDotsBtn.textContent = '✓ Dots Moved!';
+                moveDotsBtn.textContent = 'Move';
                 moveDotsBtn.style.backgroundColor = '#4CAF50';
                 setTimeout(() => {
                     moveDotsBtn.textContent = originalText;
@@ -2693,13 +2812,26 @@
                 if (point2.plotId && point2.plotId !== point1.plotId) updatePolygon(point2.plotId);
             }
             
-            // Reset merge mode
+            // Reset merge selection and update button
             selectedPointsForMerge = [];
-            enableMergeMode(); // This will disable merge mode
+            updateMergeButtonText();
             
             canvas.renderAll();
             
             console.log('Points merged at:', avgX, avgY);
+        }
+        
+        // Update merge button text based on selection
+        function updateMergeButtonText() {
+            const mergeBtn = document.getElementById('merge-btn');
+            if (mergeBtn) {
+                mergeBtn.textContent = 'Merge';
+                if (selectedPointsForMerge.length === 2) {
+                    mergeBtn.style.backgroundColor = '#4CAF50';
+                } else {
+                    mergeBtn.style.backgroundColor = '#FF9800';
+                }
+            }
         }
         
         function enableCreateMode() {
@@ -2713,7 +2845,7 @@
             const createBtn = document.getElementById('create-btn');
             const deleteBtn = document.getElementById('delete-btn');
             if (createMode) {
-                createBtn.textContent = 'Cancel Create';
+                createBtn.textContent = 'Create';
                 createBtn.style.backgroundColor = '#f44336';
                 canvas.defaultCursor = 'crosshair';
                 canvas.hoverCursor = 'crosshair';
@@ -2728,7 +2860,7 @@
                 // Update button text to show instructions
                 updateCreateButtonText();
             } else {
-                createBtn.textContent = 'Create Plot';
+                createBtn.textContent = 'Create';
                 createBtn.style.backgroundColor = '#4CAF50';
                 canvas.defaultCursor = 'default';
                 canvas.hoverCursor = 'default';
@@ -2902,27 +3034,7 @@
         function updateCreateButtonText() {
             const createBtn = document.getElementById('create-btn');
             if (!createBtn) return;
-            
-            const totalPoints = selectedExistingCircles.length + newPlotPoints.length;
-            const minPointsNeeded = 3;
-            
-            if (selectedExistingCircles.length > 0) {
-                // User has selected existing circles
-                if (totalPoints < minPointsNeeded) {
-                    const pointsNeeded = minPointsNeeded - totalPoints;
-                    createBtn.textContent = `Selected ${selectedExistingCircles.length} existing dot(s). Create ${pointsNeeded} more point(s)`;
-                } else {
-                    createBtn.textContent = `Selected ${selectedExistingCircles.length} existing dot(s). Finish & Assign Number`;
-                }
-            } else {
-                // No existing circles selected - normal create mode
-                if (newPlotPoints.length < minPointsNeeded) {
-                    const pointsNeeded = minPointsNeeded - newPlotPoints.length;
-                    createBtn.textContent = `Click ${pointsNeeded} more point(s)`;
-                } else {
-                    createBtn.textContent = 'Finish & Assign Number';
-                }
-            }
+            createBtn.textContent = 'Create';
         }
         
         // Function to find common points between new plot and existing plots
@@ -3285,26 +3397,29 @@
                 updatePolygon(plotId);
             }
             
-            // Clear create mode state
+            // Reset selected existing circles to their original color (red)
+            selectedCircles.forEach(circle => {
+                circle.set({
+                    fill: '#FF0000', // Red color
+                    stroke: '#FFFFFF',
+                    strokeWidth: 2
+                });
+                circle.setCoords();
+            });
+            
+            // Clear create mode state but keep create mode enabled for continuous creation
             newPlotPoints = [];
             selectedExistingCircles = [];
-            createMode = false;
+            // Don't disable createMode - keep it enabled so user can continue creating
             
-            const createBtn = document.getElementById('create-btn');
-            const deleteBtn = document.getElementById('delete-btn');
-            if (createBtn) {
-                createBtn.textContent = 'Create Plot';
-                createBtn.style.backgroundColor = '#4CAF50';
-            }
-            canvas.defaultCursor = 'default';
-            canvas.hoverCursor = 'default';
-            canvas.off('mouse:down', handleCreatePlotClick);
-            canvas.selection = true;
-            if (deleteBtn) deleteBtn.style.opacity = '1';
+            // Ensure create mode handlers are still active
+            canvas.defaultCursor = 'crosshair';
+            canvas.hoverCursor = 'crosshair';
+            canvas.selection = false;
             
             canvas.renderAll();
             
-            console.log('Modified plot', plotId, 'by adding', newPoints.length, 'new point(s)');
+            console.log('Modified plot', plotId, 'by adding', newPoints.length, 'new point(s). State cleared, ready for new plot creation.');
         }
         
         function createNewPlot() {
@@ -3313,6 +3428,7 @@
             
             // CRITICAL: Check if all selected existing circles belong to the same plot
             // If so, modify that existing plot instead of creating a new one
+            // NO MINIMUM POINT REQUIREMENT when editing existing plots
             if (selectedExistingCircles.length > 0 && newPlotPoints.length > 0) {
                 // Get unique plot IDs from selected circles
                 const selectedPlotIds = new Set(selectedExistingCircles.map(c => c.plotId).filter(id => id && id !== 'new_plot'));
@@ -3326,17 +3442,17 @@
                 }
             }
             
-            // Need at least 3 points total (can be mix of existing and new)
-            if (allPoints.length < 3) {
-                const existingCount = selectedExistingCircles.length;
-                const newCount = newPlotPoints.length;
-                if (existingCount > 0) {
-                    alert(`You have selected ${existingCount} existing dot(s) and created ${newCount} new point(s). Please create at least ${3 - allPoints.length} more point(s) to form a plot (minimum 3 points total).`);
-                } else {
-                    alert('Please create at least 3 points to form a plot.');
+            // Only check minimum points when creating a NEW plot (no selectedExistingCircles)
+            // When editing existing plots, any number of points is allowed
+            if (selectedExistingCircles.length === 0) {
+                // Creating a NEW plot - need at least 3 points
+                if (allPoints.length < 3) {
+                    alert('Please create at least 3 points to form a new plot.');
+                    return;
                 }
-                return;
             }
+            // If selectedExistingCircles.length > 0 but not all from same plot, continue with creation
+            // This handles the case where user selects points from different plots
             
             // Use the same scale/offset as existing plots (stored in circles)
             // This ensures consistency - new plots use the same coordinate system as existing ones
@@ -3725,35 +3841,57 @@
                     circleMoved = false;
                     circleMouseDownTime = Date.now();
                     
-                    // Handle Ctrl+Click for multi-dot selection (for pixel move feature)
+                    // Handle Ctrl+Click for multi-dot selection (for pixel move and merge)
                     if (e.e.ctrlKey || e.e.metaKey) {
                         e.e.stopPropagation();
                         e.e.stopImmediatePropagation();
                         
-                        const isAlreadySelected = selectedDotsForMove.includes(this);
+                        // Add to move selection
+                        const isAlreadySelectedMove = selectedDotsForMove.includes(this);
                         
-                        if (isAlreadySelected) {
-                            // Deselect
+                        if (isAlreadySelectedMove) {
+                            // Deselect from move
                             const index = selectedDotsForMove.indexOf(this);
                             selectedDotsForMove.splice(index, 1);
+                        } else {
+                            // Select for move
+                            selectedDotsForMove.push(this);
+                        }
+                        
+                        // Also handle merge selection (max 2 points)
+                        const isAlreadySelectedMerge = selectedPointsForMerge.includes(this);
+                        
+                        if (isAlreadySelectedMerge) {
+                            // Deselect from merge
+                            const index = selectedPointsForMerge.indexOf(this);
+                            selectedPointsForMerge.splice(index, 1);
+                            this.set({ fill: '#FF0000', stroke: '#FFFFFF', strokeWidth: 2 });
+                        } else {
+                            // Select for merge (max 2 points)
+                            if (selectedPointsForMerge.length < 2) {
+                                selectedPointsForMerge.push(this);
+                                this.set({ fill: '#00FF00', stroke: '#000000', strokeWidth: 3 });
+                            } else {
+                                // Already have 2 selected, replace first
+                                const firstPoint = selectedPointsForMerge[0];
+                                firstPoint.set({ fill: '#FF0000', stroke: '#FFFFFF', strokeWidth: 2 });
+                                selectedPointsForMerge.shift();
+                                selectedPointsForMerge.push(this);
+                                this.set({ fill: '#00FF00', stroke: '#000000', strokeWidth: 3 });
+                            }
+                        }
+                        
+                        // Update visual for move selection
+                        if (isAlreadySelectedMove) {
                             this.set({ stroke: '#FFFFFF', strokeWidth: 2 });
                         } else {
-                            // Select
-                            selectedDotsForMove.push(this);
-                            this.set({ stroke: '#4CAF50', strokeWidth: 4 }); // Green highlight
+                            this.set({ stroke: '#4CAF50', strokeWidth: 4 }); // Green highlight for move
                         }
                         
                         this.setCoords();
                         canvas.renderAll();
-                        console.log('Selected dots for move:', selectedDotsForMove.length);
                         updateMoveButtonCounter();
-                        return false;
-                    }
-                    
-                    if (mergeMode) {
-                        e.e.stopPropagation();
-                        e.e.stopImmediatePropagation();
-                        togglePointForMerge(this);
+                        updateMergeButtonText();
                         return false;
                     } else if (createMode) {
                         // In create mode, handle circle selection for new plot
@@ -4169,7 +4307,7 @@
             const mergeBtn = document.getElementById('merge-btn');
             
             if (deleteMode) {
-                deleteBtn.textContent = 'Cancel Delete';
+                deleteBtn.textContent = 'Delete';
                 deleteBtn.style.backgroundColor = '#f44336';
                 canvas.defaultCursor = 'pointer';
                 canvas.hoverCursor = 'pointer';
@@ -4270,6 +4408,41 @@
                     canvas.bringToFront(obj);
                 }
             });
+        }
+        
+        function clearPlotSelection() {
+            // Clear plot selection and reset all plots to default appearance
+            if (!selectedPlotForDelete) return;
+            
+            const plotId = selectedPlotForDelete;
+            selectedPlotForDelete = null;
+            
+            // Reset all plots to default appearance (red)
+            if (mode === 'lines') {
+                plotObjects.forEach(polygon => {
+                    polygon.set({
+                        stroke: '#FF0000',
+                        strokeWidth: 2,
+                        opacity: 0.7
+                    });
+                    polygon.setCoords();
+                    polygon.dirty = true;
+                });
+            } else {
+                // Points mode - reset all circles to red
+                Object.values(plotPoints).flat().forEach(circle => {
+                    circle.set({
+                        fill: '#FF0000',
+                        stroke: '#FFFFFF',
+                        strokeWidth: 2
+                    });
+                    circle.setCoords();
+                    circle.dirty = true;
+                });
+            }
+            
+            canvas.renderAll();
+            console.log('Plot selection cleared');
         }
         
         function selectPlotForDelete(plotId) {
@@ -4796,13 +4969,8 @@
             // Show success message
             const deleteBtn = document.getElementById('delete-btn');
             if (deleteBtn) {
-                const originalText = deleteBtn.textContent;
-                deleteBtn.textContent = '✓ Deleted & Renumbered!';
-                deleteBtn.style.backgroundColor = '#4CAF50';
-                setTimeout(() => {
-                    deleteBtn.textContent = 'Delete Plot';
-                    deleteBtn.style.backgroundColor = '#f44336';
-                }, 2000);
+                deleteBtn.textContent = 'Delete';
+                deleteBtn.style.backgroundColor = '#f44336';
             }
         }
 
@@ -4811,8 +4979,8 @@
             const container = document.getElementById('canvas-container');
             if (!container) return;
             
-            const containerWidth = Math.max(container.clientWidth - 20, 800);
-            const containerHeight = Math.max(container.clientHeight - 20, 600);
+            const containerWidth = Math.max(container.clientWidth - 20, 650);
+            const containerHeight = Math.max(container.clientHeight - 20, 500);
             
             // CRITICAL: Update canvas dimensions to match DOM container size exactly
             // This ensures pointer calculations are accurate and fixes iframe resize issues

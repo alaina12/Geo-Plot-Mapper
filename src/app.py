@@ -2176,8 +2176,7 @@ elif current_step == 2:
             "",
             height=1,  # Minimal height
             key="coord_json_input_step2",
-            placeholder='Click "Save Changes" in the viewer above, then copy the JSON from the yellow box and paste it here.',
-            help="After editing plots, click 'Save Changes' to get the JSON coordinates"
+            placeholder='Click "Save Changes" in the viewer above, then copy the JSON from the yellow box and paste it here.'
         )
         
         # Hide label and make textarea very small and unobtrusive - apply immediately

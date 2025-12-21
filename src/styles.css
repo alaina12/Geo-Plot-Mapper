@@ -151,11 +151,16 @@ div[data-testid="stTabs"] {
     text-align: center !important;
 }
 
-/* Ensure h1 is centered */
+/* Ensure h1 is centered and white */
 .geo-header-container h1 {
     text-align: center !important;
     margin: 0 auto !important;
     width: auto !important;
+    color: #FFFFFF !important;
+}
+
+.geo-header-container h1 * {
+    color: #FFFFFF !important;
 }
 
 /* Add spacing between header and upload section */
@@ -857,6 +862,160 @@ button[aria-label="Previous"]:active {
     background: #1e3a8a !important;
     transform: translateY(0) scale(1) !important;
     box-shadow: 0 4px 12px rgba(30, 58, 138, 0.3) !important;
+}
+
+/* ============================================
+   FORCE VISIBLE TEXT AND BACKGROUNDS FOR DARK MODE COMPATIBILITY
+   ============================================ */
+
+/* Step 1: "Upload Layout Image" text - Black */
+div[data-testid="stFileUploader"] label,
+div[data-testid="stFileUploader"] p,
+div[data-testid="stFileUploader"] span {
+    color: #000000 !important;
+}
+
+/* Step 1: "Image Preview" expander text - Black */
+div[data-testid="stExpander"] summary,
+div[data-testid="stExpander"] > summary {
+    color: #000000 !important;
+}
+
+/* Step 2: "Show Background" toggle label - Black */
+div[data-testid="stToggle"] label,
+div[data-baseweb="switch"] + label,
+label:has(+ div[data-baseweb="switch"]) {
+    color: #000000 !important;
+}
+
+/* Step 2: Text area (JSON paste area) - Text color black only */
+textarea[key="coord_json_input_step2"],
+div[data-testid="stTextArea"] textarea {
+    color: #000000 !important;
+}
+
+/* Step 2: Tab text "Plot with Lines" and "Plot with Points" - Black */
+div[data-testid="stTabs"] button,
+div[data-testid="stTabs"] [role="tab"],
+div[data-testid="stTabs"] button[aria-selected="true"],
+div[data-testid="stTabs"] button[aria-selected="false"] {
+    color: #000000 !important;
+}
+
+/* Step 3: Heading - Black */
+h2, h3, h4, h5, h6,
+.stSubheader,
+h2[data-testid="stSubheader"],
+h3[data-testid="stSubheader"] {
+    color: #000000 !important;
+}
+
+/* Step 3: Grid table - Text color black */
+div[data-testid="stDataFrame"] th,
+div[data-testid="stDataFrame"] td,
+table th,
+table td {
+    color: #000000 !important;
+}
+
+/* Step 5: Note text - Black */
+.stCaption,
+div[data-testid="stCaptionContainer"] p,
+div[data-testid="stCaptionContainer"] {
+    color: #000000 !important;
+}
+
+/* Step 6: Text - Black, Boxes - Dark grey */
+.stMarkdown,
+.stText,
+p,
+div[data-testid="stMarkdownContainer"] p {
+    color: #000000 !important;
+}
+
+/* Step 6: Input boxes - Text color black */
+input[type="text"],
+input[type="number"],
+input[type="email"],
+select,
+div[data-testid="stTextInput"] input,
+div[data-testid="stNumberInput"] input,
+div[data-testid="stSelectbox"] select {
+    color: #000000 !important;
+}
+
+/* Step 7: Text - Black */
+.stMarkdown,
+.stText,
+p {
+    color: #000000 !important;
+}
+
+/* Step 7: Grid table - Text color black */
+div[data-testid="stDataFrame"] th,
+div[data-testid="stDataFrame"] td,
+table th,
+table td {
+    color: #000000 !important;
+}
+
+/* Step 7: "Enable move mode" toggle label - Black */
+div[data-testid="stToggle"] label,
+label:has(+ div[data-baseweb="switch"]) {
+    color: #000000 !important;
+}
+
+/* Step 8: Toggle switch - Dark blue when active (checked) - Make it very visible */
+div[data-baseweb="switch"][aria-checked="true"] {
+    background-color: #1f3c88 !important;
+    background: #1f3c88 !important;
+    border: 2px solid #1f3c88 !important;
+    box-shadow: 0 2px 4px rgba(31, 60, 136, 0.5) !important;
+}
+
+/* Step 8: Toggle switch - Dark grey when unchecked - Make it visible on grey background */
+div[data-baseweb="switch"][aria-checked="false"] {
+    background-color: #666666 !important;
+    background: #666666 !important;
+    border: 2px solid #666666 !important;
+    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.3) !important;
+}
+
+/* Step 8: Toggle switch thumb/circle - White for visibility */
+div[data-baseweb="switch"] > div {
+    background-color: #FFFFFF !important;
+    background: #FFFFFF !important;
+    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.3) !important;
+}
+
+/* Ensure all labels are black for visibility */
+label {
+    color: #000000 !important;
+}
+
+/* Geo Plot Mapper heading - White */
+.geo-header-container h1,
+.geo-header-container h1 *,
+h1:contains("Geo Plot Mapper") {
+    color: #FFFFFF !important;
+}
+
+/* Other headings - Black */
+h2, h3, h4, h5, h6 {
+    color: #000000 !important;
+}
+
+/* Buttons - Keep text white */
+button,
+.stButton > button,
+div[data-testid="stButton"] > button {
+    color: #FFFFFF !important;
+}
+
+button[kind="primary"],
+button[data-testid*="baseButton-primary"],
+.stButton > button[kind="primary"] {
+    color: #FFFFFF !important;
 }
 
 /* Minimal spacing between Previous and Next buttons */

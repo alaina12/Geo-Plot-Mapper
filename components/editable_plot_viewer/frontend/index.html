@@ -95,6 +95,107 @@
         .zoom-btn-simple:active {
             transform: scale(0.95);
         }
+        /* Undo/Redo Controls */
+        .undo-redo-controls {
+            position: absolute;
+            top: 10px;
+            right: 10px;
+            display: flex;
+            gap: 5px;
+            z-index: 1000;
+        }
+        .undo-redo-btn {
+            width: 40px;
+            height: 40px;
+            background: rgba(255, 255, 255, 0.95);
+            border: 2px solid #666;
+            border-radius: 4px;
+            font-size: 16px;
+            font-weight: bold;
+            color: #666;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.2);
+        }
+        .undo-redo-btn:hover:not(:disabled) {
+            background: #666;
+            color: white;
+        }
+        .undo-redo-btn:disabled {
+            opacity: 0.4;
+            cursor: not-allowed;
+        }
+        /* Directional Move Controls */
+        .directional-move-controls {
+            position: absolute;
+            top: 60px;
+            right: 10px;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 5px;
+            z-index: 1000;
+        }
+        .directional-move-row {
+            display: flex;
+            gap: 5px;
+        }
+        .arrow-btn {
+            width: 40px;
+            height: 40px;
+            background: rgba(255, 255, 255, 0.95);
+            border: 2px solid #17a2b8;
+            border-radius: 4px;
+            font-size: 20px;
+            font-weight: bold;
+            color: #17a2b8;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.2);
+        }
+        .arrow-btn:hover:not(:disabled) {
+            background: #17a2b8;
+            color: white;
+        }
+        .arrow-btn:disabled {
+            opacity: 0.4;
+            cursor: not-allowed;
+        }
+        .step-size-input {
+            width: 60px;
+            height: 30px;
+            padding: 5px;
+            border: 2px solid #17a2b8;
+            border-radius: 4px;
+            text-align: center;
+            font-size: 12px;
+            margin-top: 5px;
+        }
+        /* Single Plot Edit Mode */
+        .plot-edit-controls {
+            position: absolute;
+            bottom: 10px;
+            right: 10px;
+            z-index: 1000;
+        }
+        .show-all-btn {
+            padding: 10px 15px;
+            background: rgba(255, 255, 255, 0.95);
+            border: 2px solid #4CAF50;
+            border-radius: 4px;
+            color: #4CAF50;
+            font-weight: bold;
+            cursor: pointer;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.2);
+        }
+        .show-all-btn:hover {
+            background: #4CAF50;
+            color: white;
+        }
         .zoom-controls {
             position: absolute;
             top: 10px;
@@ -356,7 +457,7 @@
         <button class="merge-button" id="merge-btn">Merge</button>
         <button class="create-button" id="create-btn">Create</button>
         <button class="delete-button" id="delete-btn">Delete</button>
-        <button class="save-button" id="move-dots-btn" style="background-color: #17a2b8;" title="Ctrl+Click on dots to select them (green), then click this button">Move</button>
+        <button class="save-button" id="visibility-toggle-btn" style="background-color: #9C27B0;" title="Toggle visibility of all plots">Show All</button>
     </div>
     <div id="canvas-container">
         <div id="loading-message">Loading image and plots...</div>
@@ -369,7 +470,27 @@
                 <button class="zoom-btn" id="zoom-in-btn">+</button>
             </div>
             <div class="zoom-value" id="zoom-value">1.0x</div>
+            <button class="zoom-btn" id="zoom-reset-btn" style="margin-top: 5px; width: 100%;">Reset</button>
             <div id="zoom-hint" style="font-size: 10px; color: #999; margin-top: 3px; text-align: center;">Zooms entire canvas<br>All layers stay together</div>
+        </div>
+        <!-- Undo/Redo Controls -->
+        <div class="undo-redo-controls">
+            <button class="undo-redo-btn" id="undo-btn" title="Undo (Ctrl+Z)">↶</button>
+            <button class="undo-redo-btn" id="redo-btn" title="Redo (Ctrl+Y)">↷</button>
+        </div>
+        <!-- Directional Move Controls -->
+        <div class="directional-move-controls">
+            <div class="directional-move-row">
+                <button class="arrow-btn" id="move-up-btn" title="Move Up">↑</button>
+            </div>
+            <div class="directional-move-row">
+                <button class="arrow-btn" id="move-left-btn" title="Move Left">←</button>
+                <button class="arrow-btn" id="move-right-btn" title="Move Right">→</button>
+            </div>
+            <div class="directional-move-row">
+                <button class="arrow-btn" id="move-down-btn" title="Move Down">↓</button>
+            </div>
+            <input type="number" class="step-size-input" id="step-size-input" value="5" min="1" max="50" title="Step size in pixels">
         </div>
     </div>
     <div id="info-panel" style="display: none;">
@@ -439,6 +560,313 @@
         const initialHeight = container ? Math.max(container.clientHeight - 20, 600) : 650;
         
         console.log('Initializing canvas with dimensions:', initialWidth, 'x', initialHeight);
+        
+        // ========== UNDO/REDO FUNCTIONALITY ==========
+        const MAX_HISTORY_DEPTH = 20;
+        let historyStack = [];
+        let historyIndex = -1;
+        let isUndoRedoOperation = false;
+
+        function saveState() {
+            if (isUndoRedoOperation || !canvas) return;
+            
+            // Serialize canvas state
+            const state = canvas.toJSON(['plotId', 'originalX', 'originalY', 'scale', 'offsetX', 'offsetY']);
+            
+            // Remove states after current index (when user does new action after undo)
+            if (historyIndex < historyStack.length - 1) {
+                historyStack = historyStack.slice(0, historyIndex + 1);
+            }
+            
+            // Add new state
+            historyStack.push(JSON.stringify(state));
+            
+            // Limit history depth
+            if (historyStack.length > MAX_HISTORY_DEPTH) {
+                historyStack.shift();
+            } else {
+                historyIndex++;
+            }
+            
+            updateUndoRedoButtons();
+        }
+
+        function undo() {
+            if (historyIndex <= 0) return;
+            
+            isUndoRedoOperation = true;
+            historyIndex--;
+            const state = JSON.parse(historyStack[historyIndex]);
+            canvas.loadFromJSON(JSON.stringify(state), function() {
+                canvas.renderAll();
+                isUndoRedoOperation = false;
+                updateUndoRedoButtons();
+            });
+        }
+
+        function redo() {
+            if (historyIndex >= historyStack.length - 1) return;
+            
+            isUndoRedoOperation = true;
+            historyIndex++;
+            const state = JSON.parse(historyStack[historyIndex]);
+            canvas.loadFromJSON(JSON.stringify(state), function() {
+                canvas.renderAll();
+                isUndoRedoOperation = false;
+                updateUndoRedoButtons();
+            });
+        }
+
+        function updateUndoRedoButtons() {
+            const undoBtn = document.getElementById('undo-btn');
+            const redoBtn = document.getElementById('redo-btn');
+            if (undoBtn) undoBtn.disabled = historyIndex <= 0;
+            if (redoBtn) redoBtn.disabled = historyIndex >= historyStack.length - 1;
+        }
+
+        // ========== DIRECTIONAL MOVE CONTROLS ==========
+        function moveSelectedPoint(direction) {
+            // Find the currently selected single point
+            const activeObject = canvas.getActiveObject();
+            if (!activeObject || !activeObject.plotId) return;
+            
+            // Check if it's a circle (point)
+            if (activeObject.type !== 'circle') return;
+            
+            const stepSize = parseInt(document.getElementById('step-size-input')?.value || 5);
+            let dx = 0, dy = 0;
+            
+            switch(direction) {
+                case 'up': dy = -stepSize; break;
+                case 'down': dy = stepSize; break;
+                case 'left': dx = -stepSize; break;
+                case 'right': dx = stepSize; break;
+            }
+            
+            // Move the point
+            activeObject.set({
+                left: activeObject.left + dx,
+                top: activeObject.top + dy
+            });
+            
+            // Update original coordinates
+            if (activeObject.originalX !== undefined) {
+                activeObject.originalX += dx;
+            }
+            if (activeObject.originalY !== undefined) {
+                activeObject.originalY += dy;
+            }
+            
+            activeObject.setCoords();
+            
+            // Update polygon if this point belongs to a plot
+            if (activeObject.plotId && plotPoints[activeObject.plotId]) {
+                updatePolygon(activeObject.plotId);
+            }
+            
+            canvas.renderAll();
+            saveState();
+        }
+
+        function updateDirectionalMoveButtons() {
+            const activeObject = canvas.getActiveObject();
+            const activeObjects = canvas.getActiveObjects ? canvas.getActiveObjects() : [];
+            
+            // Check if a single circle (point) is selected
+            const isPointSelected = activeObject && 
+                                   activeObject.type === 'circle' && 
+                                   activeObject.plotId &&
+                                   activeObjects.length === 1;
+            
+            const arrowBtns = ['move-up-btn', 'move-down-btn', 'move-left-btn', 'move-right-btn'];
+            arrowBtns.forEach(btnId => {
+                const btn = document.getElementById(btnId);
+                if (btn) btn.disabled = !isPointSelected;
+            });
+        }
+        
+        // Also update buttons when canvas selection changes via mouse
+        function setupSelectionListeners() {
+            canvas.on('selection:created', function(e) {
+                updateDirectionalMoveButtons();
+            });
+            canvas.on('selection:updated', function(e) {
+                updateDirectionalMoveButtons();
+            });
+            canvas.on('selection:cleared', function(e) {
+                updateDirectionalMoveButtons();
+            });
+            canvas.on('mouse:up', function(e) {
+                // Small delay to ensure selection is updated
+                setTimeout(updateDirectionalMoveButtons, 50);
+            });
+        }
+
+        // ========== SINGLE-PLOT EDIT MODE ==========
+        let singlePlotEditMode = false;
+        let editedPlotId = null;
+        let hiddenPlots = [];
+
+        function enterSinglePlotEditMode(plotId) {
+            // Only allow in create mode
+            if (!createMode) {
+                console.log('Cannot enter single plot edit mode - not in create mode');
+                return;
+            }
+            
+            if (singlePlotEditMode && editedPlotId === plotId) return;
+            
+            singlePlotEditMode = true;
+            editedPlotId = plotId;
+            hiddenPlots = [];
+            
+            console.log('Entering single plot edit mode for plot:', plotId, '(in create mode)');
+            
+            // Ensure selected plot is visible
+            if (plotObjects && Array.isArray(plotObjects)) {
+                const selectedPolygon = plotObjects.find(p => String(p.plotId || '') === String(plotId || ''));
+                if (selectedPolygon) {
+                    selectedPolygon.set({
+                        visible: true,
+                        opacity: 1
+                    });
+                }
+            }
+            
+            // Ensure selected plot's circles are visible
+            if (plotPoints[plotId]) {
+                plotPoints[plotId].forEach(circle => {
+                    circle.set({
+                        visible: true,
+                        opacity: 1
+                    });
+                });
+            }
+            
+            // Get all plots except the selected one
+            Object.keys(plotPoints).forEach(id => {
+                if (String(id) !== String(plotId)) {
+                    console.log('Hiding plot:', id);
+                    // Hide polygon if it exists (plotObjects is an array)
+                    if (plotObjects && Array.isArray(plotObjects)) {
+                        const polygon = plotObjects.find(p => String(p.plotId || '') === String(id || ''));
+                        if (polygon) {
+                            // Store original state
+                            hiddenPlots.push({
+                                id: id,
+                                polygon: polygon,
+                                visible: polygon.visible !== false,
+                                opacity: polygon.opacity,
+                                selectable: polygon.selectable,
+                                evented: polygon.evented
+                            });
+                            
+                            // Hide polygon but keep circles visible so user can select their points
+                            polygon.set({
+                                visible: false
+                            });
+                            console.log('Hidden polygon for plot:', id);
+                        }
+                    }
+                    
+                    // Hide circles
+                    if (plotPoints[id]) {
+                        plotPoints[id].forEach(circle => {
+                            hiddenPlots.push({
+                                id: id,
+                                circle: circle,
+                                visible: circle.visible !== false,
+                                opacity: circle.opacity,
+                                selectable: circle.selectable,
+                                evented: circle.evented
+                            });
+                            
+                            circle.set({
+                                visible: false
+                            });
+                        });
+                        console.log('Hidden', plotPoints[id].length, 'circles for plot:', id);
+                    }
+                    
+                    // Hide plot number text
+                    canvas.getObjects().forEach(obj => {
+                        if (obj.type === 'text' && obj.plotId && String(obj.plotId) === String(id)) {
+                            hiddenPlots.push({
+                                id: id,
+                                text: obj,
+                                visible: obj.visible !== false
+                            });
+                            obj.set({ visible: false });
+                        }
+                    });
+                }
+            });
+            
+            console.log('Hidden', hiddenPlots.length, 'objects. Selected plot should be visible.');
+            
+            // Update toggle button text
+            const toggleBtn = document.getElementById('visibility-toggle-btn');
+            if (toggleBtn) {
+                toggleBtn.textContent = 'Show All';
+                toggleBtn.style.backgroundColor = '#9C27B0';
+            }
+            
+            canvas.renderAll();
+        }
+
+        function exitSinglePlotEditMode() {
+            if (!singlePlotEditMode) return;
+            
+            // Restore all hidden plots
+            hiddenPlots.forEach(plotData => {
+                if (plotData.polygon) {
+                    plotData.polygon.set({
+                        visible: plotData.visible !== false,
+                        opacity: plotData.opacity,
+                        selectable: plotData.selectable,
+                        evented: plotData.evented
+                    });
+                }
+                
+                if (plotData.circle) {
+                    plotData.circle.set({
+                        visible: plotData.visible !== false,
+                        opacity: plotData.opacity,
+                        selectable: plotData.selectable,
+                        evented: plotData.evented
+                    });
+                }
+                
+                if (plotData.text) {
+                    plotData.text.set({
+                        visible: plotData.visible !== false
+                    });
+                }
+            });
+            
+            singlePlotEditMode = false;
+            editedPlotId = null;
+            hiddenPlots = [];
+            
+            // Update toggle button text
+            const toggleBtn = document.getElementById('visibility-toggle-btn');
+            if (toggleBtn) {
+                toggleBtn.textContent = 'Show All';
+                toggleBtn.style.backgroundColor = '#9C27B0';
+            }
+            
+            canvas.renderAll();
+        }
+        
+        function togglePlotVisibility() {
+            if (singlePlotEditMode) {
+                // Currently showing only one plot, show all
+                exitSinglePlotEditMode();
+            } else if (selectedPlotForDelete) {
+                // Currently showing all, hide others
+                enterSinglePlotEditMode(selectedPlotForDelete);
+            }
+        }
         
         const canvas = new fabric.Canvas('fabric-canvas', {
             width: initialWidth,
@@ -572,13 +1000,26 @@
         // Escape key to clear selections and cancel create mode
         document.addEventListener('keydown', function(e) {
             if (e.key === 'Escape') {
-                // If in create mode, cancel it (clear newly created points)
-                if (createMode && newPlotPoints.length > 0) {
+                // If in create mode, cancel it (clear newly created points and disable create mode)
+                if (createMode) {
                     // Clear all newly created points
                     newPlotPoints.forEach(point => canvas.remove(point));
                     newPlotPoints = [];
                     selectedExistingCircles = [];
-                    updateCreateButtonText();
+                    
+                    // Disable create mode
+                    createMode = false;
+                    const createBtn = document.getElementById('create-btn');
+                    const deleteBtn = document.getElementById('delete-btn');
+                    if (createBtn) {
+                        createBtn.textContent = 'Create';
+                        createBtn.style.backgroundColor = '#4CAF50';
+                    }
+                    canvas.defaultCursor = 'default';
+                    canvas.hoverCursor = 'default';
+                    canvas.off('mouse:down', handleCreatePlotClick);
+                    canvas.selection = true;
+                    if (deleteBtn) deleteBtn.style.opacity = '1';
                     canvas.renderAll();
                     console.log('Create mode cancelled via Escape key');
                 }
@@ -609,9 +1050,9 @@
                     // Only create/modify plot if in create mode and have points
                     if (createMode) {
                         const totalPoints = selectedExistingCircles.length + newPlotPoints.length;
+                        let plotFinished = false;
                         
-                        // If editing existing plot (has selectedExistingCircles), modify it directly
-                        // No minimum point requirement - user can add any number of points
+                        // If editing existing plot (has selectedExistingCircles from same plot), modify it directly
                         if (selectedExistingCircles.length > 0 && newPlotPoints.length > 0) {
                             // Get unique plot IDs from selected circles
                             const selectedPlotIds = new Set(selectedExistingCircles.map(c => c.plotId).filter(id => id && id !== 'new_plot'));
@@ -620,19 +1061,42 @@
                             if (selectedPlotIds.size === 1) {
                                 const plotIdToModify = Array.from(selectedPlotIds)[0];
                                 modifyExistingPlot(plotIdToModify, selectedExistingCircles, newPlotPoints);
-                                return;
+                                plotFinished = true;
                             }
                         }
                         
-                        // Creating a NEW plot (no selectedExistingCircles) - requires 3+ points
-                        if (selectedExistingCircles.length === 0) {
-                            if (newPlotPoints.length >= 3) {
+                        // Creating a NEW plot - can use only existing points, only new points, or both
+                        if (!plotFinished) {
+                            if (totalPoints >= 3) {
+                                // Have enough points (from existing, new, or both) - create plot
                                 createNewPlot();
-                            } else if (newPlotPoints.length > 0) {
-                                // Only show alert when creating NEW plot with insufficient points
-                                alert('A new plot needs at least 3 points. Please add more points before finishing.');
+                                plotFinished = true;
+                            } else if (totalPoints > 0) {
+                                // Have some points but not enough
+                                alert('A plot needs at least 3 points. Please add more points before finishing.');
                             }
                             // If no points, do nothing
+                        }
+                        
+                        // Disable create mode after finishing
+                        if (plotFinished) {
+                            createMode = false;
+                            const createBtn = document.getElementById('create-btn');
+                            const deleteBtn = document.getElementById('delete-btn');
+                            if (createBtn) {
+                                createBtn.textContent = 'Create';
+                                createBtn.style.backgroundColor = '#4CAF50';
+                            }
+                            canvas.defaultCursor = 'default';
+                            canvas.hoverCursor = 'default';
+                            canvas.off('mouse:down', handleCreatePlotClick);
+                            canvas.selection = true;
+                            if (deleteBtn) deleteBtn.style.opacity = '1';
+                            // Clear any temporary points
+                            newPlotPoints.forEach(point => canvas.remove(point));
+                            newPlotPoints = [];
+                            selectedExistingCircles = [];
+                            canvas.renderAll();
                         }
                     }
                 }
@@ -955,11 +1419,17 @@
                     canvas.renderAll();
                 }, 100);
                 
-                // Hide loading message
-                const loadingMsg = document.getElementById('loading-message');
-                if (loadingMsg) {
-                    loadingMsg.style.display = 'none';
-                }
+                    // Hide loading message
+                    const loadingMsg = document.getElementById('loading-message');
+                    if (loadingMsg) {
+                        loadingMsg.style.display = 'none';
+                    }
+                    
+                    // Save initial state after all plots are loaded
+                    setTimeout(() => {
+                        saveState();
+                        updateUndoRedoButtons();
+                    }, 500);
             }, {
                 crossOrigin: 'anonymous'
             });
@@ -1068,8 +1538,17 @@
                         canvas.renderAll();
                     });
                     
+                    // Save state after point movement completes
+                    circle.on('modified', function() {
+                        saveState();
+                    });
+                    
                     // Add click handler for merge mode, create mode, and plot selection
                     circle.on('mousedown', function(e) {
+                        // Stop propagation immediately to prevent polygon selection
+                        e.e.stopPropagation();
+                        e.e.stopImmediatePropagation();
+                        
                         circleMoved = false;
                         circleMouseDownTime = Date.now();
                         
@@ -1129,64 +1608,82 @@
                         
                         if (createMode) {
                             // In create mode, handle circle selection for new plot
+                            // Check if this is an existing circle (not a newly created one)
+                            if (this.plotId && this.plotId !== 'new_plot') {
+                                // Check if already selected
+                                const isAlreadySelected = selectedExistingCircles.includes(this);
+                                
+                                if (isAlreadySelected) {
+                                    // Deselect
+                                    const index = selectedExistingCircles.indexOf(this);
+                                    selectedExistingCircles.splice(index, 1);
+                                    this.set({
+                                        fill: '#FF0000',
+                                        stroke: '#FFFFFF',
+                                        strokeWidth: 2
+                                    });
+                                    this.setCoords();
+                                    console.log('Deselected existing circle. Selected:', selectedExistingCircles.length);
+                                } else {
+                                    // Select (max 4)
+                                    if (selectedExistingCircles.length < 4) {
+                                        selectedExistingCircles.push(this);
+                                        this.set({
+                                            fill: '#00FF00', // Green for selected
+                                            stroke: '#FFFFFF',
+                                            strokeWidth: 3
+                                        });
+                                        this.setCoords();
+                                        console.log('Selected existing circle. Selected:', selectedExistingCircles.length, '/ 4');
+                                    } else {
+                                        alert('You can select up to 4 existing dots. Click on a selected dot to deselect it, or create additional points.');
+                                        return false;
+                                    }
+                                }
+                                
+                                updateCreateButtonText();
+                                canvas.renderAll();
+                                return false;
+                            }
+                            // If it's a newly created point, don't handle here - let it be created normally
+                            return false;
+                        } else if (!createMode && !mergeMode && !deleteMode) {
+                            // Stop propagation to prevent plot selection when clicking on point
                             e.e.stopPropagation();
                             e.e.stopImmediatePropagation();
                             
-                            // Check if already selected
-                            const isAlreadySelected = selectedExistingCircles.includes(this);
-                            
-                            if (isAlreadySelected) {
-                                // Deselect
-                                const index = selectedExistingCircles.indexOf(this);
-                                selectedExistingCircles.splice(index, 1);
-                                this.set({
-                                    fill: '#FF0000',
-                                    stroke: '#FFFFFF',
-                                    strokeWidth: 2
-                                });
-                                this.setCoords();
-                                console.log('Deselected existing circle. Selected:', selectedExistingCircles.length);
-                            } else {
-                                // Select (max 4)
-                                if (selectedExistingCircles.length < 4) {
-                                    selectedExistingCircles.push(this);
-                                    this.set({
-                                        fill: '#00FF00', // Green for selected
-                                        stroke: '#FFFFFF',
-                                        strokeWidth: 3
-                                    });
-                                    this.setCoords();
-                                    console.log('Selected existing circle. Selected:', selectedExistingCircles.length, '/ 4');
-                                } else {
-                                    alert('You can select up to 4 existing dots. Click on a selected dot to deselect it, or create additional points.');
-                                    return false;
-                                }
-                            }
-                            
-                            updateCreateButtonText();
-                            canvas.renderAll();
-                            return false;
-                        } else if (!createMode && !mergeMode) {
-                            // Allow normal Fabric.js selection and dragging for dots
-                            // Don't stop propagation - let Fabric.js handle selection and dragging
-                            // Plot selection will be handled in mouseup if it was just a click (not drag)
+                            // Select the point immediately for directional move
+                            // Use setTimeout to ensure selection happens after event propagation is stopped
+                            setTimeout(() => {
+                                canvas.setActiveObject(this);
+                                canvas.renderAll();
+                                updateDirectionalMoveButtons();
+                            }, 0);
                         }
                     });
                     
-                    // Handle mouseup for plot selection (only if not dragged)
+                    // Handle mouseup for point selection (only if not dragged)
                     circle.on('mouseup', function(e) {
-                        if (!createMode && !circleMoved) {
-                            // Only select if it was a click (not a drag)
+                        // Always stop propagation to prevent polygon selection
+                        e.e.stopPropagation();
+                        e.e.stopImmediatePropagation();
+                        
+                        // In create mode, don't select for directional move - let mousedown handle selection
+                        if (createMode) {
+                            circleMoved = false;
+                            return false;
+                        }
+                        
+                        if (!mergeMode && !deleteMode && !circleMoved) {
+                            // Only select point if it was a click (not a drag)
                             const clickDuration = Date.now() - circleMouseDownTime;
                             if (clickDuration < 300) { // Quick click, not a drag
-                                e.e.stopPropagation();
-                                e.e.stopImmediatePropagation();
-                                console.log('Circle clicked (not dragged), selecting plot:', this.plotId);
-                                if (this.plotId) {
-                                    selectPlotForDelete(this.plotId);
-                                } else {
-                                    console.error('Circle has no plotId!', this);
-                                }
+                                // Select this point for directional move (don't select plot)
+                                canvas.setActiveObject(this);
+                                canvas.renderAll();
+                                
+                                // Update directional move buttons immediately
+                                updateDirectionalMoveButtons();
                                 return false;
                             }
                         }
@@ -1196,6 +1693,8 @@
 
                     circles.push(circle);
                     canvas.add(circle);
+                    // Ensure circles are always on top of polygons for click priority
+                    canvas.bringToFront(circle);
                 });
 
                 plotPoints[plot.id] = circles;
@@ -1239,10 +1738,24 @@
                     
                     // Add click handler for plot selection and point creation
                     polygon.on('mousedown', function(e) {
+                        // Check if click was actually on a circle (circles stop propagation)
+                        // If a circle was clicked, it will have stopped propagation, so we won't get here
+                        // But double-check by seeing if the target is a circle
+                        if (e.target && e.target.type === 'circle') {
+                            return; // Don't handle - let circle handle it
+                        }
+                        
                         // In create mode, allow clicking on polygon to add points on the line
                         if (createMode) {
                             e.e.stopPropagation();
                             e.e.stopImmediatePropagation();
+                            
+                            // First click on a plot should only select it (do not add a point yet)
+                            // After a plot is selected, subsequent clicks add points to that plot
+                            if (selectedPlotForDelete !== plot.id) {
+                                selectPlotForDelete(plot.id);
+                                return false;
+                            }
                             
                             // Convert mouse coordinates to world coordinates
                             const worldPoint = mouseToWorldCoordinates(canvas, e.e);
@@ -1325,7 +1838,12 @@
                                         statefullCache: false
                                     });
                                     
+                                    // Track if circle was moved (to distinguish click from drag)
+                                    let circleMoved = false;
+                                    let circleMouseDownTime = 0;
+                                    
                                     circle.on('moving', function(e) {
+                                        circleMoved = true;
                                         const storedScale = this.scale || 1;
                                         const storedOffsetX = this.offsetX || 0;
                                         const storedOffsetY = this.offsetY || 0;
@@ -1337,23 +1855,58 @@
                                         canvas.renderAll();
                                     });
                                     
+                                    // Add click handler to prevent polygon selection when clicking on new point
+                                    circle.on('mousedown', function(e) {
+                                        // Stop propagation immediately to prevent polygon selection
+                                        e.e.stopPropagation();
+                                        e.e.stopImmediatePropagation();
+                                        
+                                        circleMoved = false;
+                                        circleMouseDownTime = Date.now();
+                                    });
+                                    
+                                    // Handle mouseup for point selection (only if not dragged)
+                                    circle.on('mouseup', function(e) {
+                                        // Always stop propagation to prevent polygon selection
+                                        e.e.stopPropagation();
+                                        e.e.stopImmediatePropagation();
+                                        
+                                        if (!circleMoved) {
+                                            // Only select point if it was a click (not a drag)
+                                            const clickDuration = Date.now() - circleMouseDownTime;
+                                            if (clickDuration < 300) { // Quick click, not a drag
+                                                // Select this point for directional move (don't select plot)
+                                                canvas.setActiveObject(this);
+                                                canvas.renderAll();
+                                                
+                                                // Update directional move buttons immediately
+                                                updateDirectionalMoveButtons();
+                                                return false;
+                                            }
+                                        }
+                                        circleMoved = false;
+                                    });
+                                    
                                     newPlotPoints.push(circle);
                                     canvas.add(circle);
                                     canvas.bringToFront(circle);
                                     canvas.renderAll();
                                     
                                     updateCreateButtonText();
+                                    saveState();
                                 }
                             }
                             
                             return false;
                         }
                         
-                        // In delete mode, select plot for deletion
-                        if (!createMode && !mergeMode) {
+                        // Select plot when clicked
+                        // In create mode: select plot to edit (hide others)
+                        // Not in create mode: select plot for deletion
+                        if (!mergeMode) {
                             e.e.stopPropagation();
                             e.e.stopImmediatePropagation();
-                            console.log('Polygon clicked, selecting plot:', plot.id);
+                            console.log('Polygon mousedown, selecting plot:', plot.id, 'createMode:', createMode);
                             selectPlotForDelete(plot.id);
                             return false;
                         }
@@ -1361,10 +1914,15 @@
                     
                     // Also handle mouseup for better click detection
                     polygon.on('mouseup', function(e) {
-                        if (!createMode && !mergeMode) {
+                        // Check if click was actually on a circle
+                        if (e.target && e.target.type === 'circle') {
+                            return; // Don't handle - let circle handle it
+                        }
+                        
+                        if (!mergeMode) {
                             e.e.stopPropagation();
                             e.e.stopImmediatePropagation();
-                            console.log('Polygon mouseup, selecting plot:', plot.id);
+                            console.log('Polygon mouseup, selecting plot:', plot.id, 'createMode:', createMode);
                             selectPlotForDelete(plot.id);
                             return false;
                         }
@@ -2532,9 +3090,54 @@
                 createBtn.onclick = function() {
                     // Check total points (selected existing + newly created)
                     const totalPoints = selectedExistingCircles.length + newPlotPoints.length;
-                    if (createMode && totalPoints >= 3) {
-                        createNewPlot();
+                    let plotFinished = false;
+                    
+                    if (createMode) {
+                        // If editing existing plot (has selectedExistingCircles from same plot), modify it directly
+                        if (selectedExistingCircles.length > 0 && newPlotPoints.length > 0) {
+                            // Get unique plot IDs from selected circles
+                            const selectedPlotIds = new Set(selectedExistingCircles.map(c => c.plotId).filter(id => id && id !== 'new_plot'));
+                            
+                            // If all selected circles belong to the same existing plot, modify that plot
+                            if (selectedPlotIds.size === 1) {
+                                const plotIdToModify = Array.from(selectedPlotIds)[0];
+                                modifyExistingPlot(plotIdToModify, selectedExistingCircles, newPlotPoints);
+                                plotFinished = true;
+                            }
+                        }
+                        
+                        // Creating a NEW plot - can use only existing points, only new points, or both
+                        if (!plotFinished) {
+                            if (totalPoints >= 3) {
+                                // Have enough points (from existing, new, or both) - create plot
+                                createNewPlot();
+                                plotFinished = true;
+                            } else if (totalPoints > 0) {
+                                // Have some points but not enough
+                                alert('A plot needs at least 3 points. Please add more points before finishing.');
+                            }
+                            // If no points, do nothing
+                        }
+                        
+                        // Disable create mode after finishing
+                        if (plotFinished) {
+                            createMode = false;
+                            const deleteBtn = document.getElementById('delete-btn');
+                            createBtn.textContent = 'Create';
+                            createBtn.style.backgroundColor = '#4CAF50';
+                            canvas.defaultCursor = 'default';
+                            canvas.hoverCursor = 'default';
+                            canvas.off('mouse:down', handleCreatePlotClick);
+                            canvas.selection = true;
+                            if (deleteBtn) deleteBtn.style.opacity = '1';
+                            // Clear any temporary points
+                            newPlotPoints.forEach(point => canvas.remove(point));
+                            newPlotPoints = [];
+                            selectedExistingCircles = [];
+                            canvas.renderAll();
+                        }
                     } else {
+                        // Not in create mode - enable it
                         enableCreateMode();
                     }
                 };
@@ -2840,7 +3443,12 @@
             deleteMode = false;
             newPlotPoints = [];
             selectedExistingCircles = []; // Reset selected existing circles
-            selectedPlotForDelete = null;
+            // Don't clear selectedPlotForDelete - keep it if user selected a plot to edit
+            // But exit single plot edit mode when disabling create mode
+            if (!createMode) {
+                exitSinglePlotEditMode();
+                selectedPlotForDelete = null;
+            }
             pendingPlotData = null;
             const createBtn = document.getElementById('create-btn');
             const deleteBtn = document.getElementById('delete-btn');
@@ -3001,7 +3609,12 @@
                 statefullCache: false    // Disable stateful cache
             });
             
+            // Track if circle was moved (to distinguish click from drag)
+            let circleMoved = false;
+            let circleMouseDownTime = 0;
+            
             circle.on('moving', function(e) {
+                circleMoved = true;
                 // Update original coordinates when circle is moved
                 // Use the scale and offset stored when the circle was created
                 // This ensures consistency even if background image position changes
@@ -3021,6 +3634,38 @@
                 canvas.renderAll();
             });
             
+            // Add click handler to prevent polygon selection when clicking on new point
+            circle.on('mousedown', function(e) {
+                // Stop propagation immediately to prevent polygon selection
+                e.e.stopPropagation();
+                e.e.stopImmediatePropagation();
+                
+                circleMoved = false;
+                circleMouseDownTime = Date.now();
+            });
+            
+            // Handle mouseup for point selection (only if not dragged)
+            circle.on('mouseup', function(e) {
+                // Always stop propagation to prevent polygon selection
+                e.e.stopPropagation();
+                e.e.stopImmediatePropagation();
+                
+                if (!circleMoved) {
+                    // Only select point if it was a click (not a drag)
+                    const clickDuration = Date.now() - circleMouseDownTime;
+                    if (clickDuration < 300) { // Quick click, not a drag
+                        // Select this point for directional move (don't select plot)
+                        canvas.setActiveObject(this);
+                        canvas.renderAll();
+                        
+                        // Update directional move buttons immediately
+                        updateDirectionalMoveButtons();
+                        return false;
+                    }
+                }
+                circleMoved = false;
+            });
+            
             newPlotPoints.push(circle);
             canvas.add(circle);
             // Ensure new point is always on top
@@ -3029,12 +3674,31 @@
             
             // Update button text to show progress
             updateCreateButtonText();
+            saveState();
         }
         
         function updateCreateButtonText() {
             const createBtn = document.getElementById('create-btn');
             if (!createBtn) return;
-            createBtn.textContent = 'Create';
+            
+            // Check total points (selected existing + newly created)
+            const totalPoints = selectedExistingCircles.length + newPlotPoints.length;
+            
+            if (createMode) {
+                if (totalPoints >= 3) {
+                    // Show "Finish" when there are enough points
+                    createBtn.textContent = 'Finish';
+                    createBtn.style.backgroundColor = '#4CAF50';
+                } else {
+                    // Show "Create" when not enough points yet
+                    createBtn.textContent = 'Create';
+                    createBtn.style.backgroundColor = '#4CAF50';
+                }
+            } else {
+                // Not in create mode
+                createBtn.textContent = 'Create';
+                createBtn.style.backgroundColor = '#4CAF50';
+            }
         }
         
         // Function to find common points between new plot and existing plots
@@ -3426,9 +4090,15 @@
             // Combine selected existing circles with newly created points
             const allPoints = [...selectedExistingCircles, ...newPlotPoints];
             
+            // Check minimum points requirement (need at least 3 total)
+            if (allPoints.length < 3) {
+                alert('A plot needs at least 3 points. Please select or create more points.');
+                return;
+            }
+            
             // CRITICAL: Check if all selected existing circles belong to the same plot
             // If so, modify that existing plot instead of creating a new one
-            // NO MINIMUM POINT REQUIREMENT when editing existing plots
+            // This only applies when we have both selected existing circles AND new points
             if (selectedExistingCircles.length > 0 && newPlotPoints.length > 0) {
                 // Get unique plot IDs from selected circles
                 const selectedPlotIds = new Set(selectedExistingCircles.map(c => c.plotId).filter(id => id && id !== 'new_plot'));
@@ -3442,17 +4112,11 @@
                 }
             }
             
-            // Only check minimum points when creating a NEW plot (no selectedExistingCircles)
-            // When editing existing plots, any number of points is allowed
-            if (selectedExistingCircles.length === 0) {
-                // Creating a NEW plot - need at least 3 points
-                if (allPoints.length < 3) {
-                    alert('Please create at least 3 points to form a new plot.');
-                    return;
-                }
-            }
-            // If selectedExistingCircles.length > 0 but not all from same plot, continue with creation
-            // This handles the case where user selects points from different plots
+            // Creating a NEW plot (either from only existing points, only new points, or both)
+            // This handles:
+            // - Only selectedExistingCircles (from different plots or same plot but no new points)
+            // - Only newPlotPoints
+            // - Both selectedExistingCircles and newPlotPoints (from different plots)
             
             // Use the same scale/offset as existing plots (stored in circles)
             // This ensures consistency - new plots use the same coordinate system as existing ones
@@ -4417,6 +5081,9 @@
             const plotId = selectedPlotForDelete;
             selectedPlotForDelete = null;
             
+            // Exit single plot edit mode when selection is cleared (show all plots)
+            exitSinglePlotEditMode();
+            
             // Reset all plots to default appearance (red)
             if (mode === 'lines') {
                 plotObjects.forEach(polygon => {
@@ -4448,13 +5115,14 @@
         function selectPlotForDelete(plotId) {
             // Allow selection at any time (not just in delete mode)
             console.log('selectPlotForDelete called with plotId:', plotId, 'type:', typeof plotId);
-            console.log('Current mode:', mode);
+            console.log('Current mode:', mode, 'createMode:', createMode);
             console.log('Number of plotObjects:', plotObjects.length);
             console.log('Number of plotPoints:', Object.keys(plotPoints).length);
             
             selectedPlotForDelete = plotId;
             
             // Highlight selected plot with different color (blue for selected, red for others)
+            // Only hide other plots if in create mode AND user explicitly selected a plot
             if (mode === 'lines') {
                 console.log('Updating polygons for lines mode');
                 let foundMatch = false;
@@ -4475,12 +5143,16 @@
                         // Selected plot: Blue color with thicker border
                         console.log('✓ MATCH FOUND! Setting polygon to BLUE (selected)');
                         // Update properties
-                        polygon.set('stroke', '#0066FF');  // Blue color for selected
-                        polygon.set('strokeWidth', 4);
-                        polygon.set('opacity', 1);
+                        polygon.set({
+                            stroke: '#0066FF',  // Blue color for selected
+                            strokeWidth: 4,
+                            opacity: 1,
+                            visible: true
+                        });
                         // Force update and refresh
                         polygon.setCoords();
                         polygon.dirty = true;
+                        polygon.bringToFront();
                         
                         // CRITICAL: Bring selected polygon to the very front so it's visible
                         // First bring all its associated elements to front
@@ -4532,7 +5204,9 @@
                                 fill: '#0066FF',  // Blue color for selected
                                 stroke: '#FFFFFF',
                                 strokeWidth: 4,
-                                radius: circle.radius || 6  // Ensure radius is set
+                                radius: circle.radius || 6,  // Ensure radius is set
+                                visible: true,
+                                opacity: 1
                             });
                             circle.setCoords();
                             circle.dirty = true;
@@ -4575,6 +5249,11 @@
             // Force full render
             canvas.requestRenderAll();
             canvas.renderAll();
+            
+            // After highlighting, enter single plot edit mode to hide other plots (only in create mode)
+            if (createMode) {
+                enterSinglePlotEditMode(plotId);
+            }
             
             // Force another render after a short delay to ensure visual update
             setTimeout(() => {
@@ -4679,6 +5358,10 @@
         }
         
         function deletePlot(plotId) {
+            // Exit single plot edit mode if deleting the edited plot
+            if (singlePlotEditMode && editedPlotId === plotId) {
+                exitSinglePlotEditMode();
+            }
             if (!plotId) return;
             
             console.log('🗑️ Deleting plot:', plotId);
@@ -4816,6 +5499,9 @@
             // CRITICAL: Final cleanup BEFORE renumbering to catch all objects with original plotId
             // Final check: Remove any remaining objects with deleted plotId
             // Run multiple passes to ensure everything is removed
+            
+            // Save state after deletion
+            saveState();
             for (let pass = 1; pass <= 3; pass++) {
                 const remainingObjects = canvas.getObjects().filter(obj => 
                     String(obj.plotId || '') === String(originalPlotId || '')
@@ -5095,6 +5781,7 @@
         document.addEventListener('DOMContentLoaded', function() {
             const zoomInBtn = document.getElementById('zoom-in-btn');
             const zoomOutBtn = document.getElementById('zoom-out-btn');
+            const zoomResetBtn = document.getElementById('zoom-reset-btn');
             
             if (zoomInBtn) {
                 zoomInBtn.addEventListener('click', function() {
@@ -5107,6 +5794,66 @@
                     applyCanvasViewZoom(canvasViewZoom - 0.1);
                 });
             }
+            
+            if (zoomResetBtn) {
+                zoomResetBtn.addEventListener('click', function() {
+                    resetCanvasZoom();
+                });
+            }
+            
+            // Undo/Redo buttons
+            const undoBtn = document.getElementById('undo-btn');
+            const redoBtn = document.getElementById('redo-btn');
+            
+            if (undoBtn) {
+                undoBtn.addEventListener('click', undo);
+            }
+            
+            if (redoBtn) {
+                redoBtn.addEventListener('click', redo);
+            }
+            
+            // Keyboard shortcuts for Undo/Redo
+            document.addEventListener('keydown', function(e) {
+                if ((e.ctrlKey || e.metaKey) && e.key === 'z' && !e.shiftKey) {
+                    e.preventDefault();
+                    undo();
+                } else if ((e.ctrlKey || e.metaKey) && (e.key === 'y' || (e.key === 'z' && e.shiftKey))) {
+                    e.preventDefault();
+                    redo();
+                }
+            });
+            
+            // Directional move buttons
+            const moveUpBtn = document.getElementById('move-up-btn');
+            const moveDownBtn = document.getElementById('move-down-btn');
+            const moveLeftBtn = document.getElementById('move-left-btn');
+            const moveRightBtn = document.getElementById('move-right-btn');
+            
+            if (moveUpBtn) {
+                moveUpBtn.addEventListener('click', () => moveSelectedPoint('up'));
+            }
+            if (moveDownBtn) {
+                moveDownBtn.addEventListener('click', () => moveSelectedPoint('down'));
+            }
+            if (moveLeftBtn) {
+                moveLeftBtn.addEventListener('click', () => moveSelectedPoint('left'));
+            }
+            if (moveRightBtn) {
+                moveRightBtn.addEventListener('click', () => moveSelectedPoint('right'));
+            }
+            
+            // Visibility Toggle button
+            const visibilityToggleBtn = document.getElementById('visibility-toggle-btn');
+            if (visibilityToggleBtn) {
+                visibilityToggleBtn.addEventListener('click', togglePlotVisibility);
+            }
+            
+            // Setup selection listeners for directional move buttons
+            setupSelectionListeners();
+            
+            // Initial update
+            updateDirectionalMoveButtons();
         });
     </script>
 </body>

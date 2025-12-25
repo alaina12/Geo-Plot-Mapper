@@ -457,7 +457,7 @@
         <button class="merge-button" id="merge-btn">Merge</button>
         <button class="create-button" id="create-btn">Create</button>
         <button class="delete-button" id="delete-btn">Delete</button>
-        <button class="save-button" id="visibility-toggle-btn" style="background-color: #9C27B0;" title="Toggle visibility of all plots">Show All</button>
+        <button class="save-button" id="visibility-toggle-btn" style="background-color: #9C27B0;" title="Toggle visibility of all plots">Show Selected Only</button>
     </div>
     <div id="canvas-container">
         <div id="loading-message">Loading image and plots...</div>
@@ -536,14 +536,20 @@
     <!-- Pixel Move Dialog -->
     <div id="pixel-move-overlay" class="dialog-overlay" style="display: none;">
         <div id="pixel-move-dialog">
+            <h3>Move Selected Points</h3>
+            <p class="info-text" style="margin-bottom: 15px; color: #666; font-size: 13px;">
+                Enter the number of pixels to move the selected point(s). Positive values move right/down, negative values move left/up.
+            </p>
             <div class="input-row">
                 <div class="input-group">
-                    <label for="move-dx">dx</label>
-                    <input type="number" id="move-dx" value="0" step="1">
+                    <label for="move-dx">Horizontal (dx)</label>
+                    <input type="number" id="move-dx" value="0" step="1" placeholder="0">
+                    <small style="color: #888; font-size: 11px; display: block; margin-top: 3px;">Positive = right, Negative = left</small>
                 </div>
                 <div class="input-group">
-                    <label for="move-dy">dy</label>
-                    <input type="number" id="move-dy" value="0" step="1">
+                    <label for="move-dy">Vertical (dy)</label>
+                    <input type="number" id="move-dy" value="0" step="1" placeholder="0">
+                    <small style="color: #888; font-size: 11px; display: block; margin-top: 3px;">Positive = down, Negative = up</small>
                 </div>
             </div>
             <div class="button-group">
@@ -562,20 +568,87 @@
         console.log('Initializing canvas with dimensions:', initialWidth, 'x', initialHeight);
         
         // ========== UNDO/REDO FUNCTIONALITY ==========
-        const MAX_HISTORY_DEPTH = 20;
+        const MAX_HISTORY_DEPTH = 10;
         let undoStack = [];  // Stack for undo operations
         let redoStack = [];  // Stack for redo operations
         let isUndoRedoOperation = false;
 
+        // CRITICAL: Extract plot data only (no transforms, no viewport state)
+        function extractPlotData() {
+            const plotData = [];
+            
+            // Extract data for each plot
+            Object.keys(plotPoints).forEach(plotId => {
+                const circles = plotPoints[plotId];
+                if (!circles || circles.length === 0) return;
+                
+                const points = circles.map(circle => ({
+                    x: circle.originalX || 0,
+                    y: circle.originalY || 0
+                }));
+                
+                plotData.push({
+                    id: plotId,
+                    points: points
+                });
+            });
+            
+            return plotData;
+        }
+        
+        // CRITICAL: Rebuild plots from data (preserves viewport/zoom/pan)
+        function rebuildPlotsFromData(plotData) {
+            // Clear existing plots
+            plotObjects.forEach(polygon => canvas.remove(polygon));
+            Object.values(plotPoints).flat().forEach(circle => canvas.remove(circle));
+            plotObjects.length = 0;
+            Object.keys(plotPoints).forEach(key => delete plotPoints[key]);
+            
+            // Get scale/offset from background image or existing circles
+            const bgImg = window.canvasBgImg || canvas.backgroundImage;
+            let scale = 1;
+            let offsetX = 0;
+            let offsetY = 0;
+            
+            if (bgImg) {
+                scale = bgImg.originalScaleX || bgImg.scaleX || 1;
+                offsetX = bgImg.originalLeft || bgImg.left || 0;
+                offsetY = bgImg.originalTop || bgImg.top || 0;
+            }
+            
+            // Rebuild each plot
+            plotData.forEach(plot => {
+                if (!plot.points || plot.points.length < 3) return;
+                
+                const points = plot.points.map(point => ({
+                    x: (point.x * scale) + offsetX,
+                    y: (point.y * scale) + offsetY
+                }));
+                
+                // Add plot elements (this will create polygons and circles)
+                // We need to call the existing addPlotElements function
+                // But first, we need to ensure plotsData is updated
+                const plotIndex = plotsData.findIndex(p => String(p.id) === String(plot.id));
+                if (plotIndex >= 0) {
+                    plotsData[plotIndex].points = plot.points;
+                } else {
+                    plotsData.push({ id: plot.id, points: plot.points });
+                }
+            });
+            
+            // Re-add all plots using existing function
+            addPlotElements(scale, offsetX, offsetY);
+        }
+        
         function saveState() {
             if (isUndoRedoOperation || !canvas) {
                 return;
             }
             
             try {
-                // Serialize full canvas state including viewportTransform
-                const state = canvas.toJSON(['plotId', 'originalX', 'originalY', 'scale', 'offsetX', 'offsetY']);
-                const stateString = JSON.stringify(state);
+                // CRITICAL: Store ONLY plot data (no transforms, no viewport state)
+                const plotData = extractPlotData();
+                const stateString = JSON.stringify(plotData);
                 
                 // Only save if state is different from the last saved state
                 if (undoStack.length > 0 && undoStack[undoStack.length - 1] === stateString) {
@@ -729,14 +802,13 @@
                 if (e.target && e.target.type === 'circle') {
                     return;
                 }
+                // CRITICAL: In create mode, handle plot selection the same way as normal mode
+                // This ensures consistent behavior between normal and create modes
                 if (createMode) {
                     e.e.stopPropagation();
                     e.e.stopImmediatePropagation();
-                    if (selectedPlotForDelete !== this.plotId) {
-                        selectPlotForDelete(this.plotId);
-                        return false;
-                    }
-                    return false;
+                    selectPlotForDelete(this.plotId);
+                    return false; // Plot selected, don't propagate
                 }
                 if (!mergeMode) {
                     e.e.stopPropagation();
@@ -840,9 +912,9 @@
             isUndoRedoOperation = true;
             
             try {
-                // Save current state to redo stack
-                const currentState = canvas.toJSON(['plotId', 'originalX', 'originalY', 'scale', 'offsetX', 'offsetY']);
-                redoStack.push(JSON.stringify(currentState));
+                // CRITICAL: Save current plot data to redo stack (not canvas JSON)
+                const currentPlotData = extractPlotData();
+                redoStack.push(JSON.stringify(currentPlotData));
                 
                 // Remove current state from undo stack (it's the last one)
                 undoStack.pop();
@@ -856,8 +928,9 @@
                 const stateToRestore = undoStack[undoStack.length - 1];
                 
                 // Validate JSON before loading
+                let plotData;
                 try {
-                    JSON.parse(stateToRestore);
+                    plotData = JSON.parse(stateToRestore);
                 } catch (parseError) {
                     isUndoRedoOperation = false;
                     alert('Error: Invalid state data');
@@ -865,30 +938,26 @@
                 }
                 
                 try {
-                    canvas.loadFromJSON(stateToRestore, function(loadedObjects) {
-                        try {
-                            // Rebuild plot structures and reattach handlers
-                            rebuildPlotStructures();
-                            
-                            // Clear selections
-                            selectedPlotForDelete = null;
-                            selectedDotsForMove = [];
-                            selectedPointsForMerge = [];
-                            selectedExistingCircles = [];
-                            canvas.discardActiveObject();
-                            
-                            canvas.renderAll();
-                            isUndoRedoOperation = false;
-                            updateUndoRedoButtons();
-                        } catch (rebuildError) {
-                            isUndoRedoOperation = false;
-                            updateUndoRedoButtons();
-                            alert('Error rebuilding structures: ' + (rebuildError.message || String(rebuildError)));
-                        }
-                    });
-                } catch (loadError) {
+                    // CRITICAL: Rebuild plots from data (preserves viewport/zoom/pan)
+                    rebuildPlotsFromData(plotData);
+                    
+                    // Rebuild plot structures and reattach handlers
+                    rebuildPlotStructures();
+                    
+                    // CRITICAL: Clear selections but preserve mode
+                    selectedPlotForDelete = null;
+                    selectedDotsForMove = [];
+                    selectedPointsForMerge = [];
+                    selectedExistingCircles = [];
+                    canvas.discardActiveObject();
+                    
+                    canvas.renderAll();
                     isUndoRedoOperation = false;
-                    alert('Error loading state: ' + (loadError.message || String(loadError)));
+                    updateUndoRedoButtons();
+                } catch (rebuildError) {
+                    isUndoRedoOperation = false;
+                    updateUndoRedoButtons();
+                    alert('Error rebuilding structures: ' + (rebuildError.message || String(rebuildError)));
                 }
             } catch (error) {
                 isUndoRedoOperation = false;
@@ -901,27 +970,50 @@
             
             isUndoRedoOperation = true;
             
-            // Save current state to undo stack
-            const currentState = canvas.toJSON(['plotId', 'originalX', 'originalY', 'scale', 'offsetX', 'offsetY']);
-            undoStack.push(JSON.stringify(currentState));
-            
-            // Pop from redo stack and restore
-            const stateToRestore = redoStack.pop();
-            canvas.loadFromJSON(stateToRestore, function() {
-                // Rebuild plot structures and reattach handlers
-                rebuildPlotStructures();
+            try {
+                // CRITICAL: Save current plot data to undo stack (not canvas JSON)
+                const currentPlotData = extractPlotData();
+                undoStack.push(JSON.stringify(currentPlotData));
                 
-                // Clear selections
-                selectedPlotForDelete = null;
-                selectedDotsForMove = [];
-                selectedPointsForMerge = [];
-                selectedExistingCircles = [];
-                canvas.discardActiveObject();
+                // Pop from redo stack and restore
+                const stateToRestore = redoStack.pop();
                 
-                canvas.renderAll();
+                // Parse plot data
+                let plotData;
+                try {
+                    plotData = JSON.parse(stateToRestore);
+                } catch (parseError) {
+                    isUndoRedoOperation = false;
+                    alert('Error: Invalid state data');
+                    return;
+                }
+                
+                try {
+                    // CRITICAL: Rebuild plots from data (preserves viewport/zoom/pan)
+                    rebuildPlotsFromData(plotData);
+                    
+                    // Rebuild plot structures and reattach handlers
+                    rebuildPlotStructures();
+                    
+                    // CRITICAL: Clear selections but preserve mode
+                    selectedPlotForDelete = null;
+                    selectedDotsForMove = [];
+                    selectedPointsForMerge = [];
+                    selectedExistingCircles = [];
+                    canvas.discardActiveObject();
+                    
+                    canvas.renderAll();
+                    isUndoRedoOperation = false;
+                    updateUndoRedoButtons();
+                } catch (rebuildError) {
+                    isUndoRedoOperation = false;
+                    updateUndoRedoButtons();
+                    alert('Error rebuilding structures: ' + (rebuildError.message || String(rebuildError)));
+                }
+            } catch (error) {
                 isUndoRedoOperation = false;
-                updateUndoRedoButtons();
-            });
+                alert('Error during redo: ' + (error.message || String(error)));
+            }
         }
 
         function updateUndoRedoButtons() {
@@ -1056,7 +1148,11 @@
             
             // Ensure selected plot is visible
             if (plotObjects && Array.isArray(plotObjects)) {
-                const selectedPolygon = plotObjects.find(p => String(p.plotId || '') === String(plotId || ''));
+                const plotIdStr = String(plotId || '').trim();
+                const selectedPolygon = plotObjects.find(p => {
+                    const pIdStr = String(p.plotId || '').trim();
+                    return pIdStr === plotIdStr && pIdStr !== '';
+                });
                 if (selectedPolygon) {
                     selectedPolygon.set({
                         visible: true,
@@ -1077,11 +1173,17 @@
             
             // Get all plots except the selected one
             Object.keys(plotPoints).forEach(id => {
-                if (String(id) !== String(plotId)) {
+                const idStr = String(id || '').trim();
+                const plotIdStr = String(plotId || '').trim();
+                if (idStr !== plotIdStr && idStr !== '') {
                     console.log('Hiding plot:', id);
                     // Hide polygon if it exists (plotObjects is an array)
                     if (plotObjects && Array.isArray(plotObjects)) {
-                        const polygon = plotObjects.find(p => String(p.plotId || '') === String(id || ''));
+                        const idStr = String(id || '').trim();
+                        const polygon = plotObjects.find(p => {
+                            const pIdStr = String(p.plotId || '').trim();
+                            return pIdStr === idStr && pIdStr !== '';
+                        });
                         if (polygon) {
                             // Store original state
                             hiddenPlots.push({
@@ -1137,35 +1239,54 @@
             console.log('Hidden', hiddenPlots.length, 'objects. Selected plot should be visible.');
             
             // Update toggle button text
-            const toggleBtn = document.getElementById('visibility-toggle-btn');
-            if (toggleBtn) {
-                toggleBtn.textContent = 'Show All';
-                toggleBtn.style.backgroundColor = '#9C27B0';
-            }
+            updateVisibilityButtonText();
             
             canvas.renderAll();
         }
 
         function exitSinglePlotEditMode() {
-            if (!singlePlotEditMode) return;
+            if (!singlePlotEditMode) {
+                // Even if not in single plot edit mode, ensure all plots are visible and interactive
+                // This handles cases where objects might have been hidden elsewhere
+                plotObjects.forEach(polygon => {
+                    polygon.set({ 
+                        visible: true, 
+                        opacity: 1,
+                        evented: true,  // CRITICAL: Ensure all polygons are interactive
+                        selectable: true  // CRITICAL: Ensure all polygons are selectable
+                    });
+                });
+                Object.values(plotPoints).flat().forEach(circle => {
+                    circle.set({ visible: true, opacity: 1 });
+                });
+                canvas.getObjects().forEach(obj => {
+                    if (obj.type === 'text' && obj.plotId) {
+                        obj.set({ visible: true });
+                    }
+                });
+                canvas.renderAll();
+                return;
+            }
             
-            // Restore all hidden plots
+            // Restore all hidden plots from the stored array
             hiddenPlots.forEach(plotData => {
                 if (plotData.polygon) {
                     plotData.polygon.set({
                         visible: plotData.visible !== false,
-                        opacity: plotData.opacity,
-                        selectable: plotData.selectable,
-                        evented: plotData.evented
+                        opacity: plotData.opacity !== undefined ? plotData.opacity : 1,
+                        // CRITICAL: Always set to true to ensure polygons are interactive
+                        // Don't use stored values which might be false from create mode
+                        selectable: true,
+                        evented: true
                     });
                 }
                 
                 if (plotData.circle) {
                     plotData.circle.set({
                         visible: plotData.visible !== false,
-                        opacity: plotData.opacity,
-                        selectable: plotData.selectable,
-                        evented: plotData.evented
+                        opacity: plotData.opacity !== undefined ? plotData.opacity : 1,
+                        selectable: plotData.selectable !== undefined ? plotData.selectable : true,
+                        evented: plotData.evented !== undefined ? plotData.evented : true
                     });
                 }
                 
@@ -1176,21 +1297,79 @@
                 }
             });
             
+            // CRITICAL: Also ensure ALL plots are visible and interactive (in case some weren't in hiddenPlots)
+            // This is a safety measure to ensure nothing is left hidden or non-interactive
+            plotObjects.forEach(polygon => {
+                polygon.set({ 
+                    visible: true, 
+                    opacity: 1,
+                    evented: true,  // CRITICAL: Ensure all polygons are interactive
+                    selectable: true  // CRITICAL: Ensure all polygons are selectable
+                });
+            });
+            
+            Object.values(plotPoints).flat().forEach(circle => {
+                if (!circle.visible) {
+                    circle.set({ visible: true, opacity: 1 });
+                }
+            });
+            
+            canvas.getObjects().forEach(obj => {
+                if (obj.type === 'text' && obj.plotId && !obj.visible) {
+                    obj.set({ visible: true });
+                }
+            });
+            
             singlePlotEditMode = false;
             editedPlotId = null;
             hiddenPlots = [];
             
             // Update toggle button text
-            const toggleBtn = document.getElementById('visibility-toggle-btn');
-            if (toggleBtn) {
-                toggleBtn.textContent = 'Show All';
-                toggleBtn.style.backgroundColor = '#9C27B0';
-            }
+            updateVisibilityButtonText();
             
             canvas.renderAll();
         }
         
+        function updateVisibilityButtonText() {
+            const toggleBtn = document.getElementById('visibility-toggle-btn');
+            if (!toggleBtn) return;
+            
+            // CRITICAL: Only enable button if plot is selected OR in create mode
+            const canUseButton = selectedPlotForDelete || currentMode === MODE.CREATE;
+            
+            if (singlePlotEditMode) {
+                // Currently showing only one plot, button should say "Show All"
+                toggleBtn.textContent = 'Show All';
+                toggleBtn.style.backgroundColor = '#9C27B0';
+                toggleBtn.style.opacity = canUseButton ? '1' : '0.5';
+                toggleBtn.style.cursor = canUseButton ? 'pointer' : 'not-allowed';
+                toggleBtn.title = 'Click to show all plots';
+            } else {
+                // Currently showing all plots, button should say "Show Selected Only"
+                if (canUseButton) {
+                    toggleBtn.textContent = 'Show Selected Only';
+                    toggleBtn.style.backgroundColor = '#9C27B0';
+                    toggleBtn.style.opacity = '1';
+                    toggleBtn.style.cursor = 'pointer';
+                    toggleBtn.title = 'Click to show only the selected plot';
+                } else {
+                    // Disabled state - no plot selected and not in create mode
+                    toggleBtn.textContent = 'Show Selected Only';
+                    toggleBtn.style.backgroundColor = '#9C27B0';
+                    toggleBtn.style.opacity = '0.5';
+                    toggleBtn.style.cursor = 'not-allowed';
+                    toggleBtn.title = 'Select a plot first or enter create mode';
+                }
+            }
+        }
+        
         function togglePlotVisibility() {
+            // CRITICAL: Only work if a plot is selected OR in create mode
+            if (!selectedPlotForDelete && currentMode !== MODE.CREATE) {
+                // No plot selected and not in create mode - do nothing
+                return;
+            }
+            
             if (singlePlotEditMode) {
                 // Currently showing only one plot, show all
                 exitSinglePlotEditMode();
@@ -1198,19 +1377,27 @@
                 // Currently showing all, hide others (show only selected plot)
                 enterSinglePlotEditMode(selectedPlotForDelete);
             } else {
-                // No plot selected, ensure all plots are visible
-                // This makes the button work even when no plot is selected
-                exitSinglePlotEditMode(); // This will restore any hidden plots
+                // In create mode but no plot selected yet - ensure all plots are visible
+                exitSinglePlotEditMode();
                 
-                // Also ensure all objects are visible (in case some were hidden)
+                // Double-check: ensure all objects are visible (safety measure)
+                plotObjects.forEach(polygon => {
+                    polygon.set({ visible: true, opacity: 1 });
+                });
+                Object.values(plotPoints).flat().forEach(circle => {
+                    circle.set({ visible: true, opacity: 1 });
+                });
                 canvas.getObjects().forEach(obj => {
-                    if (!obj.isBackgroundImage && obj.plotId) {
+                    if (obj.type === 'text' && obj.plotId) {
                         obj.set({ visible: true });
                     }
                 });
                 
                 canvas.renderAll();
             }
+            
+            // Update button text
+            updateVisibilityButtonText();
         }
         
         const canvas = new fabric.Canvas('fabric-canvas', {
@@ -1419,18 +1606,14 @@
             } else if (e.key === 'Enter' && !e.shiftKey && !e.ctrlKey && !e.altKey) {
                 // Enter key to finish plot creation/editing (only if not in input field)
                 if (document.activeElement.tagName !== 'INPUT' && document.activeElement.tagName !== 'TEXTAREA') {
-                    // Don't create plot if a plot is selected for deletion
-                    if (selectedPlotForDelete) {
-                        // Just deselect the plot, don't create new plot
-                        clearPlotSelection();
-                        return;
-                    }
                     // Only create/modify plot if in create mode and have points
                     if (createMode) {
+                        // In create mode, allow finishing even if a plot is selected for editing
                         const totalPoints = selectedExistingCircles.length + newPlotPoints.length;
                         let plotFinished = false;
                         
                         // If editing existing plot (has selectedExistingCircles from same plot), modify it directly
+                        // This works even if points are already selected (auto-selected when plot was selected)
                         if (selectedExistingCircles.length > 0 && newPlotPoints.length > 0) {
                             // Get unique plot IDs from selected circles
                             const selectedPlotIds = new Set(selectedExistingCircles.map(c => c.plotId).filter(id => id && id !== 'new_plot'));
@@ -1440,6 +1623,24 @@
                                 const plotIdToModify = Array.from(selectedPlotIds)[0];
                                 modifyExistingPlot(plotIdToModify, selectedExistingCircles, newPlotPoints);
                                 plotFinished = true;
+                            }
+                        }
+                        
+                        // Also check if we have selectedExistingCircles and newPlotPoints but they're from the same plot
+                        // This handles the case where plot points are auto-selected and user adds new points
+                        if (!plotFinished && selectedExistingCircles.length > 0 && newPlotPoints.length > 0) {
+                            // Check if selectedExistingCircles all belong to selectedPlotForDelete
+                            if (selectedPlotForDelete) {
+                                const selectedIdStr = String(selectedPlotForDelete || '').trim();
+                                const allFromSelectedPlot = selectedExistingCircles.every(circle => {
+                                    const circleIdStr = String(circle.plotId || '').trim();
+                                    return circleIdStr === selectedIdStr && circleIdStr !== '';
+                                });
+                                
+                                if (allFromSelectedPlot) {
+                                    modifyExistingPlot(selectedPlotForDelete, selectedExistingCircles, newPlotPoints);
+                                    plotFinished = true;
+                                }
                             }
                         }
                         
@@ -1456,25 +1657,69 @@
                             // If no points, do nothing
                         }
                         
-                        // Disable create mode after finishing
-                        if (plotFinished) {
+                        // CRITICAL: Always exit create/edit mode when Enter is pressed
+                        // Exit mode if plot was finished OR if we have points (safety check)
+                        if (plotFinished || (totalPoints >= 3) || (selectedExistingCircles.length > 0 && newPlotPoints.length > 0)) {
+                            // CRITICAL: Switch to IDLE mode (preserves mode state)
+                            setMode(MODE.IDLE);
                             createMode = false;
+                            
                             const createBtn = document.getElementById('create-btn');
                             const deleteBtn = document.getElementById('delete-btn');
+                            
+                            // CRITICAL: Remove the create click handler IMMEDIATELY
+                            canvas.off('mouse:down', handleCreatePlotClick);
+                            
                             if (createBtn) {
                                 createBtn.textContent = 'Create';
                                 createBtn.style.backgroundColor = '#4CAF50';
                             }
+                            
                             canvas.defaultCursor = 'default';
                             canvas.hoverCursor = 'default';
-                            canvas.off('mouse:down', handleCreatePlotClick);
                             canvas.selection = true;
                             if (deleteBtn) deleteBtn.style.opacity = '1';
+                            
+                            // CRITICAL: Restore polygon interactivity when exiting create mode
+                            plotObjects.forEach(polygon => {
+                                polygon.set({
+                                    evented: true,
+                                    selectable: true
+                                });
+                            });
+                            
+                            // CRITICAL: Reset all green points back to red
+                            selectedExistingCircles.forEach(circle => {
+                                circle.set({ fill: '#FF0000', stroke: '#FFFFFF', strokeWidth: 2 });
+                            });
+                            selectedExistingCircles = [];
+                            
+                            // Also reset any points that might still be green
+                            Object.values(plotPoints).flat().forEach(circle => {
+                                if (circle.fill === '#00FF00') {
+                                    circle.set({ fill: '#FF0000', stroke: '#FFFFFF', strokeWidth: 2 });
+                                }
+                            });
+                            
+                            // Exit single plot edit mode to show all plots
+                            exitSinglePlotEditMode();
+                            
                             // Clear any temporary points
                             newPlotPoints.forEach(point => canvas.remove(point));
                             newPlotPoints = [];
-                            selectedExistingCircles = [];
+                            
+                            // Clear plot selection
+                            selectedPlotForDelete = null;
+                            
+                            // Force canvas to update and ensure handlers are removed
                             canvas.renderAll();
+                            
+                            // CRITICAL: Double-check that create mode is disabled
+                            if (createMode) {
+                                console.warn('Create mode was still active after cleanup, forcing disable');
+                                createMode = false;
+                                canvas.off('mouse:down', handleCreatePlotClick);
+                            }
                         }
                     }
                 }
@@ -1563,8 +1808,17 @@
         // Store plot objects and their points
         const plotObjects = [];
         const plotPoints = {}; // plotId -> array of circle objects
+        
+        // CRITICAL: Explicit mode management - single source of truth
+        const MODE = {
+            IDLE: 'idle',
+            CREATE: 'create',
+            EDIT: 'edit'
+        };
+        let currentMode = MODE.IDLE;
+        
         let mergeMode = false;
-        let createMode = false;
+        let createMode = false; // Legacy flag, kept for compatibility
         let deleteMode = false;
         let selectedPointsForMerge = [];
         let newPlotPoints = [];
@@ -1573,6 +1827,21 @@
         let pendingPlotData = null; // Store plot data before number assignment
         let selectedDotsForMove = []; // Track dots selected for pixel movement
         let moveDotsMode = false; // Track if we're in move dots selection mode
+        
+        // CRITICAL: Mode management functions
+        function setMode(newMode) {
+            const oldMode = currentMode;
+            currentMode = newMode;
+            
+            // Update legacy createMode flag for compatibility
+            createMode = (newMode === MODE.CREATE);
+            
+            console.log('Mode changed:', oldMode, '->', newMode);
+        }
+        
+        function getMode() {
+            return currentMode;
+        }
         
         // Canvas zoom functionality - zooms entire canvas (image, plots, dots)
         let canvasViewZoom = 1.0;
@@ -2123,169 +2392,20 @@
                             return; // Don't handle - let circle handle it
                         }
                         
-                        // In create mode, allow clicking on polygon to add points on the line
+                        // CRITICAL: In create mode, handle plot selection the same way as normal mode
+                        // This ensures consistent behavior between normal and create modes
                         if (createMode) {
                             e.e.stopPropagation();
                             e.e.stopImmediatePropagation();
-                            
-                            // First click on a plot should only select it (do not add a point yet)
-                            // After a plot is selected, subsequent clicks add points to that plot
-                            if (selectedPlotForDelete !== plot.id) {
-                                selectPlotForDelete(plot.id);
-                                return false;
-                            }
-                            
-                            // Convert mouse coordinates to world coordinates
-                            const worldPoint = mouseToWorldCoordinates(canvas, e.e);
-                            
-                            // Find closest point on polygon line segment
-                            const closest = findClosestPointOnPolygon(worldPoint, polygon);
-                            
-                            if (closest && closest.point) {
-                                // Create point at projected location on the line
-                                // Use handleCreatePlotClick logic but with projected coordinates
-                                const projectedPoint = closest.point;
-                                
-                                // Get scale/offset for coordinate conversion
-                                const allExistingCircles = Object.values(plotPoints).flat();
-                                let scale = 1;
-                                let offsetX = 0;
-                                let offsetY = 0;
-                                
-                                if (allExistingCircles.length > 0) {
-                                    scale = allExistingCircles[0].scale || 1;
-                                    offsetX = allExistingCircles[0].offsetX || 0;
-                                    offsetY = allExistingCircles[0].offsetY || 0;
-                                } else {
-                                    const bgImg = window.canvasBgImg || canvas.backgroundImage;
-                                    if (bgImg) {
-                                        scale = bgImg.originalScaleX || bgImg.scaleX || 1;
-                                        offsetX = bgImg.originalLeft || bgImg.left || 0;
-                                        offsetY = bgImg.originalTop || bgImg.top || 0;
-                                    }
-                                }
-                                
-                                // Calculate original coordinates
-                                const originalX = Math.round((projectedPoint.x - offsetX) / scale);
-                                const originalY = Math.round((projectedPoint.y - offsetY) / scale);
-                                
-                                // Check if too close to existing points from other plots
-                                const minDistance = 15;
-                                let tooClose = false;
-                                
-                                Object.values(plotPoints).flat().forEach(existingCircle => {
-                                    if (existingCircle.plotId !== 'new_plot' && !selectedExistingCircles.includes(existingCircle)) {
-                                        const dx = projectedPoint.x - existingCircle.left;
-                                        const dy = projectedPoint.y - existingCircle.top;
-                                        const distance = Math.sqrt(dx * dx + dy * dy);
-                                        if (distance < minDistance) {
-                                            tooClose = true;
-                                        }
-                                    }
-                                });
-                                
-                                if (!tooClose) {
-                                    // Create point at projected location
-                                    const circle = new fabric.Circle({
-                                        left: projectedPoint.x,
-                                        top: projectedPoint.y,
-                                        radius: 4,
-                                        fill: '#0000FF',
-                                        stroke: '#FFFFFF',
-                                        strokeWidth: 2,
-                                        originX: 'center',
-                                        originY: 'center',
-                                        selectable: true,
-                                        hasControls: false,
-                                        hasBorders: true,
-                                        borderColor: '#0066CC',
-                                        cornerColor: '#0066CC',
-                                        cornerSize: 8,
-                                        plotId: 'new_plot',
-                                        pointIndex: newPlotPoints.length,
-                                        scale: scale,
-                                        offsetX: offsetX,
-                                        offsetY: offsetY,
-                                        originalX: originalX,
-                                        originalY: originalY,
-                                        evented: true,
-                                        hoverCursor: 'move',
-                                        moveCursor: 'move',
-                                        objectCaching: false,
-                                        noScaleCache: true,
-                                        statefullCache: false
-                                    });
-                                    
-                                    // Track if circle was moved (to distinguish click from drag)
-                                    let circleMoved = false;
-                                    let circleMouseDownTime = 0;
-                                    
-                                    circle.on('moving', function(e) {
-                                        circleMoved = true;
-                                        const storedScale = this.scale || 1;
-                                        const storedOffsetX = this.offsetX || 0;
-                                        const storedOffsetY = this.offsetY || 0;
-                                        
-                                        this.originalX = Math.round((this.left - storedOffsetX) / storedScale);
-                                        this.originalY = Math.round((this.top - storedOffsetY) / storedScale);
-                                        
-                                        this.setCoords();
-                                        canvas.renderAll();
-                                    });
-                                    
-                                    // Add click handler to prevent polygon selection when clicking on new point
-                                    circle.on('mousedown', function(e) {
-                                        // Stop propagation immediately to prevent polygon selection
-                                        e.e.stopPropagation();
-                                        e.e.stopImmediatePropagation();
-                                        
-                                        circleMoved = false;
-                                        circleMouseDownTime = Date.now();
-                                    });
-                                    
-                                    // Handle mouseup for point selection (only if not dragged)
-                                    circle.on('mouseup', function(e) {
-                                        // Always stop propagation to prevent polygon selection
-                                        e.e.stopPropagation();
-                                        e.e.stopImmediatePropagation();
-                                        
-                                        if (!circleMoved) {
-                                            // Only select point if it was a click (not a drag)
-                                            const clickDuration = Date.now() - circleMouseDownTime;
-                                            if (clickDuration < 300) { // Quick click, not a drag
-                                                // Select this point for directional move (don't select plot)
-                                                canvas.setActiveObject(this);
-                                                canvas.renderAll();
-                                                
-                                                // Update directional move buttons immediately
-                                                updateDirectionalMoveButtons();
-                                                return false;
-                                            }
-                                        }
-                                        circleMoved = false;
-                                    });
-                                    
-                                    newPlotPoints.push(circle);
-                                    canvas.add(circle);
-                                    canvas.bringToFront(circle);
-                                    canvas.renderAll();
-                                    
-                                    updateCreateButtonText();
-                                    saveState();
-                                }
-                            }
-                            
-                            return false;
+                            selectPlotForDelete(plot.id);
+                            return false; // Plot selected, don't propagate
                         }
                         
-                        // Select plot when clicked
-                        // In create mode: select plot to edit (hide others)
-                        // Not in create mode: select plot for deletion
+                        // Non-create mode: handle polygon selection normally
                         if (!mergeMode) {
                             e.e.stopPropagation();
                             e.e.stopImmediatePropagation();
-                            console.log('Polygon mousedown, selecting plot:', plot.id, 'createMode:', createMode);
-                            selectPlotForDelete(plot.id);
+                            selectPlotForDelete(this.plotId);
                             return false;
                         }
                     });
@@ -3472,6 +3592,7 @@
                     
                     if (createMode) {
                         // If editing existing plot (has selectedExistingCircles from same plot), modify it directly
+                        // This works even if points are already selected (auto-selected when plot was selected)
                         if (selectedExistingCircles.length > 0 && newPlotPoints.length > 0) {
                             // Get unique plot IDs from selected circles
                             const selectedPlotIds = new Set(selectedExistingCircles.map(c => c.plotId).filter(id => id && id !== 'new_plot'));
@@ -3481,6 +3602,24 @@
                                 const plotIdToModify = Array.from(selectedPlotIds)[0];
                                 modifyExistingPlot(plotIdToModify, selectedExistingCircles, newPlotPoints);
                                 plotFinished = true;
+                            }
+                        }
+                        
+                        // Also check if we have selectedExistingCircles and newPlotPoints but they're from the same plot
+                        // This handles the case where plot points are auto-selected and user adds new points
+                        if (!plotFinished && selectedExistingCircles.length > 0 && newPlotPoints.length > 0) {
+                            // Check if selectedExistingCircles all belong to selectedPlotForDelete
+                            if (selectedPlotForDelete) {
+                                const selectedIdStr = String(selectedPlotForDelete || '').trim();
+                                const allFromSelectedPlot = selectedExistingCircles.every(circle => {
+                                    const circleIdStr = String(circle.plotId || '').trim();
+                                    return circleIdStr === selectedIdStr && circleIdStr !== '';
+                                });
+                                
+                                if (allFromSelectedPlot) {
+                                    modifyExistingPlot(selectedPlotForDelete, selectedExistingCircles, newPlotPoints);
+                                    plotFinished = true;
+                                }
                             }
                         }
                         
@@ -3508,10 +3647,38 @@
                             canvas.off('mouse:down', handleCreatePlotClick);
                             canvas.selection = true;
                             if (deleteBtn) deleteBtn.style.opacity = '1';
+                            
+                            // CRITICAL: Restore polygon interactivity when exiting create mode
+                            plotObjects.forEach(polygon => {
+                                polygon.set({
+                                    evented: true,
+                                    selectable: true
+                                });
+                            });
+                            
+                            // CRITICAL: Reset all green points back to red
+                            selectedExistingCircles.forEach(circle => {
+                                circle.set({ fill: '#FF0000', stroke: '#FFFFFF', strokeWidth: 2 });
+                            });
+                            selectedExistingCircles = [];
+                            
+                            // Also reset any points that might still be green
+                            Object.values(plotPoints).flat().forEach(circle => {
+                                if (circle.fill === '#00FF00') {
+                                    circle.set({ fill: '#FF0000', stroke: '#FFFFFF', strokeWidth: 2 });
+                                }
+                            });
+                            
+                            // Exit single plot edit mode to show all plots
+                            exitSinglePlotEditMode();
+                            
                             // Clear any temporary points
                             newPlotPoints.forEach(point => canvas.remove(point));
                             newPlotPoints = [];
-                            selectedExistingCircles = [];
+                            
+                            // Clear plot selection
+                            selectedPlotForDelete = null;
+                            
                             canvas.renderAll();
                         }
                     } else {
@@ -3819,21 +3986,26 @@
         }
         
         function enableCreateMode() {
-            createMode = !createMode;
+            // CRITICAL: Use explicit mode management
+            if (currentMode === MODE.CREATE || currentMode === MODE.EDIT) {
+                setMode(MODE.IDLE);
+            } else {
+                setMode(MODE.CREATE);
+            }
             mergeMode = false;
             deleteMode = false;
             newPlotPoints = [];
             selectedExistingCircles = []; // Reset selected existing circles
             // Don't clear selectedPlotForDelete - keep it if user selected a plot to edit
             // But exit single plot edit mode when disabling create mode
-            if (!createMode) {
+            if (currentMode === MODE.IDLE) {
                 exitSinglePlotEditMode();
                 selectedPlotForDelete = null;
             }
             pendingPlotData = null;
             const createBtn = document.getElementById('create-btn');
             const deleteBtn = document.getElementById('delete-btn');
-            if (createMode) {
+            if (currentMode === MODE.CREATE) {
                 createBtn.textContent = 'Create';
                 createBtn.style.backgroundColor = '#f44336';
                 canvas.defaultCursor = 'crosshair';
@@ -3846,6 +4018,15 @@
                 canvas.allowTouchScrolling = false;
                 if (deleteBtn) deleteBtn.style.opacity = '0.5';
                 
+                // CRITICAL: Keep polygons interactive in create mode so plot selection works the same way as normal mode
+                // The polygon mousedown handler will handle plot selection
+                plotObjects.forEach(polygon => {
+                    polygon.set({
+                        evented: true,
+                        selectable: true
+                    });
+                });
+                
                 // Update button text to show instructions
                 updateCreateButtonText();
             } else {
@@ -3856,6 +4037,28 @@
                 canvas.off('mouse:down', handleCreatePlotClick);
                 canvas.selection = true;
                 if (deleteBtn) deleteBtn.style.opacity = '1';
+                
+                // Restore polygon interactivity when exiting create mode
+                plotObjects.forEach(polygon => {
+                    polygon.set({
+                        evented: true,
+                        selectable: true
+                    });
+                });
+                
+                // CRITICAL: Reset all green points back to red when exiting create mode
+                selectedExistingCircles.forEach(circle => {
+                    circle.set({ fill: '#FF0000', stroke: '#FFFFFF', strokeWidth: 2 });
+                });
+                selectedExistingCircles = [];
+                
+                // Also reset any points that might still be green
+                Object.values(plotPoints).flat().forEach(circle => {
+                    if (circle.fill === '#00FF00') {
+                        circle.set({ fill: '#FF0000', stroke: '#FFFFFF', strokeWidth: 2 });
+                    }
+                });
+                
                 // Clear any temporary points
                 newPlotPoints.forEach(point => canvas.remove(point));
                 newPlotPoints = [];
@@ -3866,33 +4069,98 @@
         function handleCreatePlotClick(options) {
             if (!createMode) return;
             
-            // Prevent default canvas behavior and panning
-            if (options.e) {
-                options.e.preventDefault();
-                options.e.stopPropagation();
-                options.e.stopImmediatePropagation();
-            }
-            
-            // Don't create on existing plot elements (but allow clicking on background and circles)
-            // Circles are handled by their own mousedown handler in create mode
-            // Polygons are handled by their own mousedown handler in create mode (with line projection)
+            // CRITICAL: Don't interfere with polygon selection - let polygon mousedown handler work normally
+            // If click is on a polygon, the polygon handler will select it and return false
+            // Only handle clicks on empty canvas or after plot is selected
             if (options.target && options.target !== canvas.backgroundImage) {
                 // Allow clicking on circles (they handle their own selection)
                 if (options.target.type === 'circle') {
                     return; // Let circle handler deal with it
                 }
-                // Block clicks on polygons (they handle their own projection logic) and text
-                if (options.target.plotId || options.target.type === 'polygon' || options.target.type === 'text') {
+                // Block clicks on text
+                if (options.target.type === 'text') {
                     return;
+                }
+                // CRITICAL: If click is on a polygon, let the polygon handler deal with it
+                // The polygon handler will select the plot, then we can add points on subsequent clicks
+                if (options.target.type === 'polygon' || options.target.points) {
+                    return; // Let polygon handler deal with selection
+                }
+            }
+            
+            // Convert mouse coordinates to world coordinates (used for point creation)
+            const worldPoint = mouseToWorldCoordinates(canvas, options.e);
+            
+            // CRITICAL: Polygon selection is now handled by polygon mousedown handler (same as normal mode)
+            // This function only handles point creation on empty canvas or on segments
+            
+            // If a plot is selected, check if click is on a segment of that plot
+            if (selectedPlotForDelete) {
+                // Use string comparison for robust ID matching
+                const selectedIdStr = String(selectedPlotForDelete || '').trim();
+                const selectedPolygon = plotObjects.find(p => {
+                    const pIdStr = String(p.plotId || '').trim();
+                    return pIdStr === selectedIdStr && pIdStr !== '';
+                });
+                if (selectedPolygon) {
+                    
+                    // Find closest point on polygon line segment
+                    const closest = findClosestPointOnPolygon(worldPoint, selectedPolygon);
+                    
+                    // If click is close to a segment (within 20 pixels), add point on that segment
+                    if (closest && closest.point && closest.distance < 20) {
+                        const projectedPoint = closest.point;
+                        
+                        // Get scale/offset for coordinate conversion
+                        const allExistingCircles = Object.values(plotPoints).flat();
+                        let scale = 1;
+                        let offsetX = 0;
+                        let offsetY = 0;
+                        
+                        if (allExistingCircles.length > 0) {
+                            scale = allExistingCircles[0].scale || 1;
+                            offsetX = allExistingCircles[0].offsetX || 0;
+                            offsetY = allExistingCircles[0].offsetY || 0;
+                        } else {
+                            const bgImg = window.canvasBgImg || canvas.backgroundImage;
+                            if (bgImg) {
+                                scale = bgImg.originalScaleX || bgImg.scaleX || 1;
+                                offsetX = bgImg.originalLeft || bgImg.left || 0;
+                                offsetY = bgImg.originalTop || bgImg.top || 0;
+                            }
+                        }
+                        
+                        // Calculate original coordinates
+                        const originalX = Math.round((projectedPoint.x - offsetX) / scale);
+                        const originalY = Math.round((projectedPoint.y - offsetY) / scale);
+                        
+                        // Check if too close to existing points
+                        const minDistance = 15;
+                        let tooClose = false;
+                        
+                        Object.values(plotPoints).flat().forEach(existingCircle => {
+                            if (existingCircle.plotId !== 'new_plot' && !selectedExistingCircles.includes(existingCircle)) {
+                                const dx = projectedPoint.x - existingCircle.left;
+                                const dy = projectedPoint.y - existingCircle.top;
+                                const distance = Math.sqrt(dx * dx + dy * dy);
+                                if (distance < minDistance) {
+                                    tooClose = true;
+                                }
+                            }
+                        });
+                        
+                        if (!tooClose) {
+                            // Create point at projected location on segment
+                            createNewPointAtLocation(projectedPoint, scale, offsetX, offsetY, originalX, originalY);
+                            return; // Point created, exit
+                        }
+                    }
                 }
             }
             
             // If we have selected existing circles, we can create additional points
             // If no existing circles selected, create new points as before
-            
-            // CRITICAL: Convert mouse coordinates to world coordinates
-            // This ensures geometry calculations are done in world space, independent of zoom/pan
-            const worldPoint = mouseToWorldCoordinates(canvas, options.e);
+            // worldPoint is already calculated above
             
             // CRITICAL: Use the same scale/offset as existing plots (stored in circles)
             // Background image scaling does NOT affect coordinate space - we use stored values from circles
@@ -3922,6 +4190,10 @@
                     offsetY = bgImg.originalTop || bgImg.top || 0;
                 }
             }
+            
+            // Calculate original coordinates from world coordinates
+            const originalX = Math.round((worldPoint.x - offsetX) / scale);
+            const originalY = Math.round((worldPoint.y - offsetY) / scale);
             
             // Check if the new point is too close to existing points from OTHER plots
             // CRITICAL: Allow points to be close to each other when creating the same plot
@@ -3956,10 +4228,11 @@
             console.log('Creating new point', newPlotPoints.length + 1, 'at world coords:', worldPoint.x, worldPoint.y);
             
             // Create a new point - ensure it's on top of everything
-            // Calculate original coordinates from world coordinates
-            const originalX = Math.round((worldPoint.x - offsetX) / scale);
-            const originalY = Math.round((worldPoint.y - offsetY) / scale);
-            
+            createNewPointAtLocation(worldPoint, scale, offsetX, offsetY, originalX, originalY);
+        }
+        
+        // Helper function to create a new point at a specific location
+        function createNewPointAtLocation(worldPoint, scale, offsetX, offsetY, originalX, originalY) {
             const circle = new fabric.Circle({
                 left: worldPoint.x,
                 top: worldPoint.y,
@@ -5339,6 +5612,30 @@
                 canvas.off('mouse:down', handleCreatePlotClick);
                 canvas.selection = true;
                 if (deleteBtn) deleteBtn.style.opacity = '1';
+                
+                // CRITICAL: Restore polygon interactivity when exiting create mode
+                plotObjects.forEach(polygon => {
+                    polygon.set({
+                        evented: true,
+                        selectable: true
+                    });
+                });
+                
+                // CRITICAL: Reset all green points back to red
+                selectedExistingCircles.forEach(circle => {
+                    circle.set({ fill: '#FF0000', stroke: '#FFFFFF', strokeWidth: 2 });
+                });
+                selectedExistingCircles = [];
+                
+                // Also reset any points that might still be green
+                Object.values(plotPoints).flat().forEach(circle => {
+                    if (circle.fill === '#00FF00') {
+                        circle.set({ fill: '#FF0000', stroke: '#FFFFFF', strokeWidth: 2 });
+                    }
+                });
+                
+                // Exit single plot edit mode to show all plots
+                exitSinglePlotEditMode();
             }
             
             // Force immediate render to show plot number
@@ -5418,8 +5715,10 @@
                 
                 // Reset plot highlighting (but keep selection if one exists)
                 if (mode === 'lines') {
+                    const selectedIdStr = String(selectedPlotForDelete || '').trim();
                     plotObjects.forEach(polygon => {
-                        if (polygon.plotId === selectedPlotForDelete) {
+                        const polygonIdStr = String(polygon.plotId || '').trim();
+                        if (polygonIdStr === selectedIdStr && polygonIdStr !== '') {
                             // Keep blue highlight for selected plot
                             polygon.set({ 
                                 stroke: '#0066FF',  // Blue for selected
@@ -5436,8 +5735,10 @@
                         }
                     });
                 } else {
+                    const selectedIdStr = String(selectedPlotForDelete || '').trim();
                     Object.values(plotPoints).flat().forEach(circle => {
-                        if (circle.plotId === selectedPlotForDelete) {
+                        const circleIdStr = String(circle.plotId || '').trim();
+                        if (circleIdStr === selectedIdStr && circleIdStr !== '') {
                             // Keep blue highlight for selected plot
                             circle.set({ 
                                 fill: '#0066FF',  // Blue for selected
@@ -5486,13 +5787,44 @@
         
         function clearPlotSelection() {
             // Clear plot selection and reset all plots to default appearance
-            if (!selectedPlotForDelete) return;
+            if (!selectedPlotForDelete) {
+                // Even if no plot selected, reset all green points to red
+                selectedExistingCircles.forEach(circle => {
+                    circle.set({ fill: '#FF0000', stroke: '#FFFFFF', strokeWidth: 2 });
+                });
+                selectedExistingCircles = [];
+                
+                // Also reset any points that might still be green
+                Object.values(plotPoints).flat().forEach(circle => {
+                    if (circle.fill === '#00FF00') {
+                        circle.set({ fill: '#FF0000', stroke: '#FFFFFF', strokeWidth: 2 });
+                    }
+                });
+                canvas.renderAll();
+                return;
+            }
             
             const plotId = selectedPlotForDelete;
             selectedPlotForDelete = null;
             
             // Exit single plot edit mode when selection is cleared (show all plots)
             exitSinglePlotEditMode();
+            
+            // Update visibility button text when selection is cleared
+            updateVisibilityButtonText();
+            
+            // CRITICAL: Reset all green points back to red
+            selectedExistingCircles.forEach(circle => {
+                circle.set({ fill: '#FF0000', stroke: '#FFFFFF', strokeWidth: 2 });
+            });
+            selectedExistingCircles = [];
+            
+            // Also reset any points that might still be green
+            Object.values(plotPoints).flat().forEach(circle => {
+                if (circle.fill === '#00FF00') {
+                    circle.set({ fill: '#FF0000', stroke: '#FFFFFF', strokeWidth: 2 });
+                }
+            });
             
             // Reset all plots to default appearance (red)
             if (mode === 'lines') {
@@ -5531,6 +5863,45 @@
             
             selectedPlotForDelete = plotId;
             
+            // Update visibility button text when plot is selected
+            updateVisibilityButtonText();
+            
+            // CRITICAL: In create/edit mode: enter single plot edit mode and auto-select all points
+            if (currentMode === MODE.CREATE || currentMode === MODE.EDIT) {
+                // Enter single plot edit mode to hide other plots
+                enterSinglePlotEditMode(plotId);
+                
+                // Automatically select all points of the selected plot (turn them green)
+                // Use string comparison for plotId to handle type mismatches
+                const plotIdStr = String(plotId || '').trim();
+                const plotPointsKey = Object.keys(plotPoints).find(key => String(key || '').trim() === plotIdStr);
+                
+                if (plotPointsKey && plotPoints[plotPointsKey]) {
+                    // Clear previous selections from other plots
+                    selectedExistingCircles.forEach(circle => {
+                        const circleIdStr = String(circle.plotId || '').trim();
+                        if (circleIdStr !== plotIdStr) {
+                            // Reset to original color (red or whatever it was)
+                            circle.set({ fill: '#FF0000', stroke: '#FFFFFF', strokeWidth: 2 });
+                        }
+                    });
+                    selectedExistingCircles = [];
+                    
+                    // CRITICAL: Select ALL points of the selected plot automatically (turn them green)
+                    // This allows user to just add new points without manually selecting existing ones
+                    plotPoints[plotPointsKey].forEach(circle => {
+                        if (!selectedExistingCircles.includes(circle)) {
+                            selectedExistingCircles.push(circle);
+                            // Turn green to show they're selected
+                            circle.set({ fill: '#00FF00', stroke: '#FFFFFF', strokeWidth: 3 });
+                        }
+                    });
+                    
+                    updateCreateButtonText();
+                    canvas.renderAll();
+                }
+            }
+            
             // Highlight selected plot with different color (blue for selected, red for others)
             // Only hide other plots if in create mode AND user explicitly selected a plot
             if (mode === 'lines') {
@@ -5543,9 +5914,10 @@
                 }
                 
                 plotObjects.forEach((polygon, idx) => {
-                    const polygonId = String(polygon.plotId || '');
-                    const targetId = String(plotId || '');
-                    const matches = polygonId === targetId;
+                    // Use strict string comparison to avoid type mismatches
+                    const polygonId = String(polygon.plotId || '').trim();
+                    const targetId = String(plotId || '').trim();
+                    const matches = polygonId === targetId && polygonId !== '';
                     console.log(`Polygon ${idx}: plotId="${polygonId}", target="${targetId}", matches=${matches}`);
                     
                     if (matches) {
@@ -5566,12 +5938,17 @@
                         
                         // CRITICAL: Bring selected polygon to the very front so it's visible
                         // First bring all its associated elements to front
-                        if (plotPoints[plotId]) {
-                            plotPoints[plotId].forEach(circle => canvas.bringToFront(circle));
+                        const plotIdStr = String(plotId || '').trim();
+                        const plotPointsKey = Object.keys(plotPoints).find(key => String(key || '').trim() === plotIdStr);
+                        if (plotPointsKey && plotPoints[plotPointsKey]) {
+                            plotPoints[plotPointsKey].forEach(circle => canvas.bringToFront(circle));
                         }
                         canvas.getObjects().forEach(obj => {
-                            if (obj.type === 'text' && obj.plotId === plotId) {
-                                canvas.bringToFront(obj);
+                            if (obj.type === 'text') {
+                                const objIdStr = String(obj.plotId || '').trim();
+                                if (objIdStr === plotIdStr && objIdStr !== '') {
+                                    canvas.bringToFront(obj);
+                                }
                             }
                         });
                         // Then bring the polygon itself to front (above other polygons)
@@ -5600,10 +5977,12 @@
                 console.log('Updating circles for points mode');
                 let foundMatch = false;
                 
+                const plotIdStr = String(plotId || '').trim();
                 Object.keys(plotPoints).forEach(id => {
-                    // Use string comparison to handle type mismatches
-                    const matches = String(id || '') === String(plotId || '');
-                    console.log(`PlotPoints key="${id}", target="${plotId}", matches=${matches}`);
+                    // Use strict string comparison to handle type mismatches
+                    const idStr = String(id || '').trim();
+                    const matches = idStr === plotIdStr && idStr !== '';
+                    console.log(`PlotPoints key="${idStr}", target="${plotIdStr}", matches=${matches}`);
                     
                     plotPoints[id].forEach((circle, idx) => {
                         if (matches) {
@@ -6301,6 +6680,8 @@
             const visibilityToggleBtn = document.getElementById('visibility-toggle-btn');
             if (visibilityToggleBtn) {
                 visibilityToggleBtn.addEventListener('click', togglePlotVisibility);
+                // Initialize button text
+                updateVisibilityButtonText();
             }
             
             // Setup selection listeners for directional move buttons
